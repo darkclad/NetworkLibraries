@@ -1,0 +1,69 @@
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <!-- Variant 2: Open book with globe/network - Purple & Green theme -->
+  <defs>
+    <linearGradient id="leftPage" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#9B59B6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8E44AD;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="rightPage" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#27AE60;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#229954;stop-opacity:1" />
+    </linearGradient>
+    <radialGradient id="globeGrad">
+      <stop offset="0%" style="stop-color:#3498DB;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2980B9;stop-opacity:1" />
+    </radialGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="96" cy="96" r="88" fill="#ECF0F1"/>
+
+  <!-- Open Book -->
+  <g>
+    <!-- Left page -->
+    <path d="M 30 70 Q 30 55 45 55 L 90 55 L 90 145 L 45 145 Q 30 145 30 130 Z" fill="url(#leftPage)"/>
+    <path d="M 34 70 Q 34 59 45 59 L 86 59 L 86 141 L 45 141 Q 34 141 34 130 Z" fill="#F8F9FA"/>
+
+    <!-- Right page -->
+    <path d="M 102 55 L 147 55 Q 162 55 162 70 L 162 130 Q 162 145 147 145 L 102 145 Z" fill="url(#rightPage)"/>
+    <path d="M 106 59 L 147 59 Q 158 59 158 70 L 158 130 Q 158 141 147 141 L 106 141 Z" fill="#F8F9FA"/>
+
+    <!-- Book spine/center -->
+    <rect x="90" y="55" width="12" height="90" fill="#34495E"/>
+    <ellipse cx="96" cy="145" rx="6" ry="3" fill="#2C3E50"/>
+
+    <!-- Text lines on pages -->
+    <line x1="42" y1="75" x2="80" y2="75" stroke="#9B59B6" stroke-width="1.5" opacity="0.4"/>
+    <line x1="42" y1="85" x2="80" y2="85" stroke="#9B59B6" stroke-width="1.5" opacity="0.4"/>
+    <line x1="42" y1="95" x2="80" y2="95" stroke="#9B59B6" stroke-width="1.5" opacity="0.4"/>
+    <line x1="112" y1="75" x2="150" y2="75" stroke="#27AE60" stroke-width="1.5" opacity="0.4"/>
+    <line x1="112" y1="85" x2="150" y2="85" stroke="#27AE60" stroke-width="1.5" opacity="0.4"/>
+    <line x1="112" y1="95" x2="150" y2="95" stroke="#27AE60" stroke-width="1.5" opacity="0.4"/>
+  </g>
+
+  <!-- Globe with network connections -->
+  <g>
+    <circle cx="96" cy="125" r="35" fill="url(#globeGrad)"/>
+    <circle cx="96" cy="125" r="35" fill="none" stroke="#FFFFFF" stroke-width="2"/>
+
+    <!-- Latitude lines -->
+    <ellipse cx="96" cy="125" rx="35" ry="10" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6"/>
+    <ellipse cx="96" cy="125" rx="35" ry="20" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6"/>
+
+    <!-- Longitude lines -->
+    <ellipse cx="96" cy="125" rx="10" ry="35" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6"/>
+    <ellipse cx="96" cy="125" rx="20" ry="35" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6"/>
+
+    <!-- Network nodes -->
+    <circle cx="75" cy="110" r="4" fill="#FFFFFF"/>
+    <circle cx="117" cy="110" r="4" fill="#FFFFFF"/>
+    <circle cx="96" cy="95" r="4" fill="#FFFFFF"/>
+    <circle cx="96" cy="155" r="4" fill="#FFFFFF"/>
+
+    <!-- Connection lines -->
+    <line x1="75" y1="110" x2="96" y2="95" stroke="#FFFFFF" stroke-width="2" opacity="0.7"/>
+    <line x1="117" y1="110" x2="96" y2="95" stroke="#FFFFFF" stroke-width="2" opacity="0.7"/>
+    <line x1="75" y1="110" x2="96" y2="155" stroke="#FFFFFF" stroke-width="2" opacity="0.7"/>
+    <line x1="117" y1="110" x2="96" y2="155" stroke="#FFFFFF" stroke-width="2" opacity="0.7"/>
+  </g>
+</svg>

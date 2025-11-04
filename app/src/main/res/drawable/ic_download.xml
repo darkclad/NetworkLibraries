@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Download icon: Arrow pointing down into a horizontal line/tray -->
+
+    <!-- Arrow shaft (vertical line) -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M11,3 h2 v10 h-2 z"/>
+
+    <!-- Arrow head (triangle pointing down) -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,17 L7,12 h4 v0 h2 v0 h4 z"/>
+
+    <!-- Horizontal tray base -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4,19 h16 v2 h-16 z"/>
+</vector>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext traffic for flibusta.is -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">flibusta.is</domain>
+    </domain-config>
+</network-security-config>

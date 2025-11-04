@@ -1,0 +1,27 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Library icon: Stack of books -->
+
+    <!-- Book 1 (bottom, slightly tilted left) -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4,18 L8,16 L8,8 L4,10 Z"/>
+
+    <!-- Book 2 (middle, upright) -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M9,17 L13,17 L13,7 L9,7 Z"/>
+
+    <!-- Book 3 (top, slightly tilted right) -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M14,16 L18,18 L18,10 L14,8 Z"/>
+
+    <!-- Shelf base -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M2,19 L20,19 L20,21 L2,21 Z"/>
+</vector>

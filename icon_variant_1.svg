@@ -1,0 +1,38 @@
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <!-- Variant 1: Book with WWW overlay - Blue & Orange theme -->
+  <defs>
+    <linearGradient id="bookGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF6B35;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F7931E;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="wwwGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2E5C8A;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="96" cy="96" r="88" fill="#FFF5E1"/>
+
+  <!-- Book -->
+  <g>
+    <!-- Book cover -->
+    <rect x="50" y="55" width="92" height="110" rx="6" fill="url(#bookGrad1)"/>
+    <!-- Book pages -->
+    <rect x="54" y="59" width="84" height="102" rx="4" fill="#FFF8DC"/>
+    <!-- Page lines -->
+    <line x1="65" y1="80" x2="127" y2="80" stroke="#FFB84D" stroke-width="2" opacity="0.5"/>
+    <line x1="65" y1="95" x2="127" y2="95" stroke="#FFB84D" stroke-width="2" opacity="0.5"/>
+    <line x1="65" y1="110" x2="127" y2="110" stroke="#FFB84D" stroke-width="2" opacity="0.5"/>
+    <line x1="65" y1="125" x2="127" y2="125" stroke="#FFB84D" stroke-width="2" opacity="0.5"/>
+    <!-- Book spine shadow -->
+    <rect x="92" y="55" width="6" height="110" fill="#D55A28" opacity="0.4"/>
+  </g>
+
+  <!-- WWW Badge -->
+  <g>
+    <circle cx="130" cy="70" r="32" fill="url(#wwwGrad1)"/>
+    <circle cx="130" cy="70" r="28" fill="none" stroke="#FFFFFF" stroke-width="2"/>
+    <text x="130" y="80" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#FFFFFF" text-anchor="middle">WWW</text>
+  </g>
+</svg>

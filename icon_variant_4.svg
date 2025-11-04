@@ -1,0 +1,84 @@
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <!-- Variant 4: Books with browser window frame - Multicolor gradient theme -->
+  <defs>
+    <linearGradient id="browserGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667EEA;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#764BA2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F093FB;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bookStack1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#F093FB;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F5576C;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bookStack2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4FACFE;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00F2FE;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bookStack3" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#43E97B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#38F9D7;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="96" cy="96" r="88" fill="#F8F9FA"/>
+
+  <!-- Browser Window Frame -->
+  <g>
+    <!-- Window border -->
+    <rect x="35" y="45" width="122" height="115" rx="8" fill="url(#browserGrad)"/>
+    <rect x="39" y="49" width="114" height="107" rx="6" fill="#FFFFFF"/>
+
+    <!-- Browser chrome (top bar) -->
+    <rect x="39" y="49" width="114" height="20" rx="6" fill="url(#browserGrad)"/>
+    <rect x="39" y="63" width="114" height="6" fill="#E9ECEF"/>
+
+    <!-- Browser dots/buttons -->
+    <circle cx="48" cy="59" r="3" fill="#FF5F56"/>
+    <circle cx="58" cy="59" r="3" fill="#FFBD2E"/>
+    <circle cx="68" cy="59" r="3" fill="#27C93F"/>
+
+    <!-- Address bar -->
+    <rect x="80" y="55" width="65" height="8" rx="4" fill="#FFFFFF" opacity="0.6"/>
+    <text x="85" y="61" font-family="monospace" font-size="6" fill="#FFFFFF">www</text>
+  </g>
+
+  <!-- Stack of books inside browser -->
+  <g transform="translate(0, 10)">
+    <!-- Book 1 (bottom) -->
+    <rect x="50" y="105" width="92" height="14" rx="2" fill="url(#bookStack1)"/>
+    <rect x="53" y="107" width="86" height="10" rx="1" fill="#FFFFFF" opacity="0.3"/>
+    <rect x="50" y="105" width="6" height="14" fill="#C0395B"/>
+
+    <!-- Book 2 (middle) -->
+    <rect x="52" y="89" width="88" height="16" rx="2" fill="url(#bookStack2)"/>
+    <rect x="55" y="91" width="82" height="12" rx="1" fill="#FFFFFF" opacity="0.3"/>
+    <rect x="52" y="89" width="6" height="16" fill="#0080C0"/>
+
+    <!-- Book 3 (top) -->
+    <rect x="55" y="71" width="82" height="18" rx="2" fill="url(#bookStack3)"/>
+    <rect x="58" y="73" width="76" height="14" rx="1" fill="#FFFFFF" opacity="0.3"/>
+    <rect x="55" y="71" width="6" height="18" fill="#2BAF5F"/>
+
+    <!-- Page details on top book -->
+    <line x1="65" y1="77" x2="125" y2="77" stroke="#FFFFFF" stroke-width="1" opacity="0.6"/>
+    <line x1="65" y1="81" x2="125" y2="81" stroke="#FFFFFF" stroke-width="1" opacity="0.6"/>
+    <line x1="65" y1="85" x2="110" y2="85" stroke="#FFFFFF" stroke-width="1" opacity="0.6"/>
+  </g>
+
+  <!-- Connection/network icon overlay -->
+  <g>
+    <circle cx="140" cy="140" r="20" fill="#667EEA"/>
+    <circle cx="140" cy="140" r="18" fill="none" stroke="#FFFFFF" stroke-width="2"/>
+
+    <!-- Globe mesh -->
+    <ellipse cx="140" cy="140" rx="12" ry="5" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.8"/>
+    <ellipse cx="140" cy="140" rx="5" ry="12" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.8"/>
+    <line x1="140" y1="122" x2="140" y2="158" stroke="#FFFFFF" stroke-width="1.5" opacity="0.8"/>
+    <line x1="122" y1="140" x2="158" y2="140" stroke="#FFFFFF" stroke-width="1.5" opacity="0.8"/>
+
+    <!-- Signal waves -->
+    <path d="M 148 132 Q 152 136 148 140" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6"/>
+    <path d="M 132 132 Q 128 136 132 140" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6"/>
+  </g>
+</svg>
