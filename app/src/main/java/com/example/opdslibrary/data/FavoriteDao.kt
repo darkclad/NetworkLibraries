@@ -55,4 +55,16 @@ interface FavoriteDao {
      */
     @Query("SELECT COUNT(*) FROM favorite_entries WHERE catalogId = :catalogId")
     suspend fun getFavoritesCount(catalogId: Long): Int
+
+    /**
+     * Get all favorites across all catalogs (for cleanup operations)
+     */
+    @Query("SELECT * FROM favorite_entries")
+    suspend fun getAllFavorites(): List<FavoriteEntry>
+
+    /**
+     * Update hierarchy path and URLs for a favorite entry
+     */
+    @Query("UPDATE favorite_entries SET hierarchyPath = :hierarchyPath, hierarchyUrls = :hierarchyUrls WHERE id = :id")
+    suspend fun updateHierarchy(id: Long, hierarchyPath: String, hierarchyUrls: String)
 }

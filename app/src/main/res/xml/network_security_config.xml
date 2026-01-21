@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow cleartext traffic for flibusta.is -->
+    <!-- Allow cleartext traffic for OPDS catalogs that don't support HTTPS -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">flibusta.is</domain>
+        <domain includeSubdomains="true">flibusta.net</domain>
+        <domain includeSubdomains="true">flibusta.site</domain>
     </domain-config>
 </network-security-config>

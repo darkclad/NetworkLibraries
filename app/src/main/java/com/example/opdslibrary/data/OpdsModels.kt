@@ -40,6 +40,25 @@ data class OpdsFeed(
     fun hasNextPage(): Boolean {
         return getNextPageLink() != null
     }
+
+    /**
+     * Get the search link if available (OpenSearch)
+     * OPDS catalogs use rel="search" with type containing "opensearchdescription"
+     * or direct search templates
+     */
+    fun getSearchLink(): OpdsLink? {
+        return links.firstOrNull {
+            it.rel == "search" ||
+            it.type?.contains("opensearchdescription", ignoreCase = true) == true
+        }
+    }
+
+    /**
+     * Check if this feed supports search
+     */
+    fun hasSearch(): Boolean {
+        return getSearchLink() != null
+    }
 }
 
 /**
@@ -106,6 +125,27 @@ data class OpdsEntry(
      */
     fun getHtmlLinks(): List<OpdsLink> {
         return links.filter { it.type == "text/html" }
+    }
+
+    /**
+     * Get related/navigation links that can be opened in OPDS catalog
+     * This includes author links, series links, related books, etc.
+     * Excludes acquisition links (downloads) and image links
+     */
+    fun getRelatedLinks(): List<OpdsLink> {
+        return links.filter { link ->
+            // Include navigation links (atom+xml feeds)
+            val isNavigation = link.type?.contains("atom+xml") == true ||
+                    link.rel == "subsection" ||
+                    link.rel == "related" ||
+                    link.rel == "alternate"
+
+            // Exclude acquisition and image links
+            val isAcquisition = link.rel?.startsWith("http://opds-spec.org/acquisition") == true
+            val isImage = link.rel?.contains("image") == true
+
+            isNavigation && !isAcquisition && !isImage
+        }
     }
 }
 

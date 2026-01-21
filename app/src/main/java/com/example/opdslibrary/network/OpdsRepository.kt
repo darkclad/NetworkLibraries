@@ -27,6 +27,11 @@ class UnauthorizedException(message: String) : Exception(message)
 class NotFoundException(message: String) : Exception(message)
 
 /**
+ * Exception when server returns HTML instead of OPDS feed
+ */
+class HtmlResponseException(val url: String, message: String) : Exception(message)
+
+/**
  * Repository for fetching OPDS feeds with caching support
  */
 class OpdsRepository(private val context: Context) {
@@ -60,6 +65,7 @@ class OpdsRepository(private val context: Context) {
      * @param password Optional password for authentication
      * @param forceRefresh If true, bypass cache and fetch from network
      * @param parentUpdated Update timestamp from parent entry (used for cache validation)
+     * @param primaryUrl If provided, use this URL for cache key instead of the fetch URL (for alternate URL fallback)
      * @return Result containing OpdsFeedResult with feed data and cache status
      */
     suspend fun fetchFeed(
@@ -67,19 +73,23 @@ class OpdsRepository(private val context: Context) {
         username: String? = null,
         password: String? = null,
         forceRefresh: Boolean = false,
-        parentUpdated: String? = null
+        parentUpdated: String? = null,
+        primaryUrl: String? = null
     ): Result<OpdsFeedResult> = withContext(Dispatchers.IO) {
         try {
-            // Check cache if not forcing refresh
+            // Use primary URL for cache operations, fetch URL for network
+            val cacheKey = primaryUrl ?: url
+
+            // Check cache if not forcing refresh (always use primary URL for cache)
             if (!forceRefresh) {
-                val cachedFeed = getCachedFeedIfValid(url, parentUpdated)
+                val cachedFeed = getCachedFeedIfValid(cacheKey, parentUpdated)
                 if (cachedFeed != null) {
-                    Log.d(TAG, "Using cached OPDS feed for: $url")
+                    Log.d(TAG, "Using cached OPDS feed for: $cacheKey")
                     return@withContext Result.success(OpdsFeedResult(cachedFeed, fromCache = true))
                 }
             }
 
-            Log.d(TAG, "Fetching OPDS feed from network: $url (forceRefresh=$forceRefresh)")
+            Log.d(TAG, "Fetching OPDS feed from network: $url (cacheKey=$cacheKey, forceRefresh=$forceRefresh)")
 
             val requestBuilder = Request.Builder()
                 .url(url)
@@ -93,52 +103,60 @@ class OpdsRepository(private val context: Context) {
             }
 
             val request = requestBuilder.build()
-            val response = client.newCall(request).execute()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "HTTP error: ${response.code} ${response.message}")
 
-            if (!response.isSuccessful) {
-                Log.e(TAG, "HTTP error: ${response.code} ${response.message}")
+                    // Handle 401 Unauthorized specifically
+                    if (response.code == 401) {
+                        Log.w(TAG, "401 Unauthorized - authentication required")
+                        return@withContext Result.failure(
+                            UnauthorizedException("Authentication required")
+                        )
+                    }
 
-                // Handle 401 Unauthorized specifically
-                if (response.code == 401) {
-                    Log.w(TAG, "401 Unauthorized - authentication required")
+                    // Handle 404 Not Found specifically
+                    if (response.code == 404) {
+                        Log.w(TAG, "404 Not Found - catalog no longer exists")
+                        return@withContext Result.failure(
+                            NotFoundException("Catalog not found (404)")
+                        )
+                    }
+
                     return@withContext Result.failure(
-                        UnauthorizedException("Authentication required")
+                        IOException("Unexpected response code: ${response.code}")
                     )
                 }
 
-                // Handle 404 Not Found specifically
-                if (response.code == 404) {
-                    Log.w(TAG, "404 Not Found - catalog no longer exists")
-                    return@withContext Result.failure(
-                        NotFoundException("Catalog not found (404)")
-                    )
+                // Read the response body as string for logging
+                val xmlString = response.body?.string()
+                    ?: return@withContext Result.failure(IOException("Empty response body"))
+
+                // Log the XML response (truncated if too long)
+                Log.d(TAG, "Received XML (${xmlString.length} chars):")
+                if (xmlString.length > 5000) {
+                    Log.d(TAG, xmlString.substring(0, 5000) + "\n... [truncated]")
+                } else {
+                    Log.d(TAG, xmlString)
                 }
 
-                return@withContext Result.failure(
-                    IOException("Unexpected response code: ${response.code}")
-                )
+                // Check if response is HTML instead of XML/OPDS feed
+                val trimmedContent = xmlString.trimStart()
+                if (trimmedContent.startsWith("<!DOCTYPE html", ignoreCase = true) ||
+                    trimmedContent.startsWith("<html", ignoreCase = true)) {
+                    Log.d(TAG, "Response is HTML, not OPDS feed")
+                    return@withContext Result.failure(HtmlResponseException(url, "Server returned HTML page instead of OPDS feed"))
+                }
+
+                // Convert string back to InputStream for parsing
+                val feed = parser.parse(xmlString.byteInputStream())
+                Log.d(TAG, "Successfully parsed feed: ${feed.title}")
+
+                // Cache the feed using primary URL as key
+                cacheFeed(cacheKey, xmlString, feed.updated)
+
+                Result.success(OpdsFeedResult(feed, fromCache = false))
             }
-
-            // Read the response body as string for logging
-            val xmlString = response.body?.string()
-                ?: return@withContext Result.failure(IOException("Empty response body"))
-
-            // Log the XML response (truncated if too long)
-            Log.d(TAG, "Received XML (${xmlString.length} chars):")
-            if (xmlString.length > 5000) {
-                Log.d(TAG, xmlString.substring(0, 5000) + "\n... [truncated]")
-            } else {
-                Log.d(TAG, xmlString)
-            }
-
-            // Convert string back to InputStream for parsing
-            val feed = parser.parse(xmlString.byteInputStream())
-            Log.d(TAG, "Successfully parsed feed: ${feed.title}")
-
-            // Cache the feed
-            cacheFeed(url, xmlString, feed.updated)
-
-            Result.success(OpdsFeedResult(feed, fromCache = false))
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching/parsing feed", e)
             Result.failure(e)
@@ -261,5 +279,47 @@ class OpdsRepository(private val context: Context) {
         }
         Log.w(TAG, "Could not parse date: $dateString")
         return null
+    }
+
+    /**
+     * Fetch raw content from a URL (used for OpenSearch Description documents)
+     * @param url URL to fetch
+     * @param username Optional username for authentication
+     * @param password Optional password for authentication
+     * @return Raw string content or null if failed
+     */
+    suspend fun fetchRawContent(
+        url: String,
+        username: String? = null,
+        password: String? = null
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Fetching raw content from: $url")
+
+            val requestBuilder = Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", "opdsLibrary/1.0")
+
+            // Add Basic Authentication if credentials are provided
+            if (username != null && password != null) {
+                val credentials = okhttp3.Credentials.basic(username, password)
+                requestBuilder.addHeader("Authorization", credentials)
+            }
+
+            val request = requestBuilder.build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "HTTP error fetching raw content: ${response.code}")
+                    return@withContext null
+                }
+
+                val content = response.body?.string()
+                Log.d(TAG, "Received raw content (${content?.length ?: 0} chars)")
+                content
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching raw content from $url", e)
+            null
+        }
     }
 }

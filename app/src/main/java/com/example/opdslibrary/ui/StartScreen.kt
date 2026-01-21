@@ -2,12 +2,18 @@ package com.example.opdslibrary.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import android.util.Log
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -23,12 +29,13 @@ import com.example.opdslibrary.data.OpdsCatalog
 import com.example.opdslibrary.viewmodel.StartScreenViewModel
 
 /**
- * Start screen that displays all OPDS catalogs
+ * Network Libraries screen that displays all OPDS catalogs
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StartScreen(
     onCatalogSelected: (OpdsCatalog) -> Unit,
+    onBack: () -> Unit,
     viewModel: StartScreenViewModel = viewModel()
 ) {
     val catalogs by viewModel.catalogs.collectAsState()
@@ -42,11 +49,19 @@ fun StartScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Network libraries") },
+                title = { Text("Network Libraries") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                ),
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                }
             )
         },
         floatingActionButton = {
@@ -89,12 +104,36 @@ fun StartScreen(
                     )
                 }
             } else {
+                val listState = rememberLazyListState()
+
+                // Log visible items in scroll
+                LaunchedEffect(listState) {
+                    snapshotFlow { listState.layoutInfo }
+                        .distinctUntilChanged()
+                        .collectLatest { layoutInfo ->
+                            val visibleItems = layoutInfo.visibleItemsInfo
+                            if (visibleItems.isNotEmpty()) {
+                                val firstVisible = visibleItems.first().index
+                                val lastVisible = visibleItems.last().index
+                                Log.d("ScrollItems", "StartScreen visible items: $firstVisible-$lastVisible (total: ${layoutInfo.totalItemsCount})")
+                                visibleItems.forEach { itemInfo ->
+                                    val index = itemInfo.index
+                                    if (index < catalogs.size) {
+                                        val catalog = catalogs[index]
+                                        Log.d("ScrollItems", "  [$index] ${catalog.getDisplayName()}")
+                                    }
+                                }
+                            }
+                        }
+                }
+
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(catalogs, key = { it.id }) { catalog ->
+                    itemsIndexed(catalogs, key = { _, catalog -> catalog.id }) { index, catalog ->
                         CatalogCard(
                             catalog = catalog,
                             onClick = { onCatalogSelected(catalog) },
@@ -107,7 +146,7 @@ fun StartScreen(
             }
 
             if (isLoading) {
-                CircularProgressIndicator(
+                CustomSpinner(
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
@@ -126,8 +165,8 @@ fun StartScreen(
         if (showAddDialog) {
             AddCatalogDialog(
                 onDismiss = { showAddDialog = false },
-                onAdd = { url, customName ->
-                    viewModel.addCatalog(url, customName.ifBlank { null })
+                onAdd = { url, customName, alternateUrl ->
+                    viewModel.addCatalog(url, customName.ifBlank { null }, alternateUrl)
                     showAddDialog = false
                 }
             )
@@ -292,10 +331,11 @@ fun CatalogCard(
 @Composable
 fun AddCatalogDialog(
     onDismiss: () -> Unit,
-    onAdd: (url: String, customName: String) -> Unit
+    onAdd: (url: String, customName: String, alternateUrl: String?) -> Unit
 ) {
     var url by remember { mutableStateOf("") }
     var customName by remember { mutableStateOf("") }
+    var alternateUrl by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -309,6 +349,21 @@ fun AddCatalogDialog(
                     placeholder = { Text("http://example.com/opds") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = alternateUrl,
+                    onValueChange = { alternateUrl = it },
+                    label = { Text("Alternate URL (Optional)") },
+                    placeholder = { Text("http://mirror.example.com/opds") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Used as fallback when primary URL times out",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
@@ -329,7 +384,7 @@ fun AddCatalogDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onAdd(url, customName) },
+                onClick = { onAdd(url, customName, alternateUrl.ifBlank { null }) },
                 enabled = url.isNotBlank()
             ) {
                 Text("Add")
@@ -354,6 +409,7 @@ fun EditCatalogDialog(
 ) {
     var url by remember { mutableStateOf(catalog.url) }
     var customName by remember { mutableStateOf(catalog.customName ?: "") }
+    var alternateUrl by remember { mutableStateOf(catalog.alternateUrl ?: "") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -366,6 +422,21 @@ fun EditCatalogDialog(
                     label = { Text("Catalog URL") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = alternateUrl,
+                    onValueChange = { alternateUrl = it },
+                    label = { Text("Alternate URL (Optional)") },
+                    placeholder = { Text("http://mirror.example.com/opds") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Used as fallback when primary URL times out",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
@@ -390,7 +461,8 @@ fun EditCatalogDialog(
                     onSave(
                         catalog.copy(
                             url = url,
-                            customName = customName.ifBlank { null }
+                            customName = customName.ifBlank { null },
+                            alternateUrl = alternateUrl.ifBlank { null }
                         )
                     )
                 },

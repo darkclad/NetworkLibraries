@@ -23,11 +23,17 @@ data class OpdsCatalog(
     /** URL to the catalog icon */
     val iconUrl: String? = null,
 
+    /** Local file path to the cached catalog icon */
+    val iconLocalPath: String? = null,
+
     /** Timestamp when the icon was last updated from OPDS feed (ISO 8601 format) */
     val iconUpdated: String? = null,
 
     /** Whether this is the default catalog */
     val isDefault: Boolean = false,
+
+    /** Alternate URL to use when primary URL times out */
+    val alternateUrl: String? = null,
 
     /** Timestamp when the catalog was added */
     val addedDate: Long = System.currentTimeMillis()

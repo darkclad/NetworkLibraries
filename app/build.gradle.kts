@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.opdslibrary"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -72,6 +72,9 @@ dependencies {
     // Image loading
     implementation("io.coil-kt:coil-compose:2.5.0")
 
+    // DocumentFile for folder picker
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
@@ -80,8 +83,16 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
+    // DataStore for preferences
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
     // JSON serialization
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Room FTS for full-text search (Lucene is not Android-compatible)
+
+    // WorkManager for background scanning
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

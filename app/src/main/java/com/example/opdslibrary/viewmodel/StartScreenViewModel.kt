@@ -37,7 +37,7 @@ class StartScreenViewModel(application: Application) : AndroidViewModel(applicat
      * Add a new catalog
      * If customName is null, will attempt to fetch the name from OPDS feed
      */
-    fun addCatalog(url: String, customName: String? = null) {
+    fun addCatalog(url: String, customName: String? = null, alternateUrl: String? = null) {
         viewModelScope.launch {
             try {
                 _isLoading.value = true
@@ -61,7 +61,8 @@ class StartScreenViewModel(application: Application) : AndroidViewModel(applicat
                         opdsName = feed.title,
                         iconUrl = feed.icon,
                         iconUpdated = feed.updated,
-                        isDefault = false
+                        isDefault = false,
+                        alternateUrl = alternateUrl
                     )
                 } else {
                     // If we can't fetch the feed, still add the catalog with provided info
@@ -71,7 +72,8 @@ class StartScreenViewModel(application: Application) : AndroidViewModel(applicat
                         opdsName = null,
                         iconUrl = null,
                         iconUpdated = null,
-                        isDefault = false
+                        isDefault = false,
+                        alternateUrl = alternateUrl
                     )
                 }
 

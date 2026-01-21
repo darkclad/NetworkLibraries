@@ -90,4 +90,22 @@ interface CatalogDao {
      */
     @Query("SELECT COUNT(*) FROM opds_catalogs WHERE url = :url")
     suspend fun catalogExists(url: String): Int
+
+    /**
+     * Get a catalog by URL
+     */
+    @Query("SELECT * FROM opds_catalogs WHERE url = :url LIMIT 1")
+    suspend fun getCatalogByUrl(url: String): OpdsCatalog?
+
+    /**
+     * Update alternate URL for a catalog
+     */
+    @Query("UPDATE opds_catalogs SET alternateUrl = :alternateUrl WHERE url = :url")
+    suspend fun updateAlternateUrl(url: String, alternateUrl: String?)
+
+    /**
+     * Update local icon path for a catalog
+     */
+    @Query("UPDATE opds_catalogs SET iconLocalPath = :localPath WHERE id = :catalogId")
+    suspend fun updateIconLocalPath(catalogId: Long, localPath: String?)
 }
