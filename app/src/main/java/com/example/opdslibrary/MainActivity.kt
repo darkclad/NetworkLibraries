@@ -22,12 +22,10 @@ import com.example.opdslibrary.ui.MainScreen
 import com.example.opdslibrary.ui.StartScreen
 import com.example.opdslibrary.ui.library.BookDetailScreen
 import com.example.opdslibrary.ui.library.LibraryScreen
-import com.example.opdslibrary.ui.library.LibrarySettingsScreen
 import com.example.opdslibrary.ui.theme.OpdsLibraryTheme
 import com.example.opdslibrary.viewmodel.AppSettingsViewModel
 import com.example.opdslibrary.viewmodel.CatalogViewModel
 import com.example.opdslibrary.viewmodel.LibraryViewModel
-import com.example.opdslibrary.viewmodel.LibrarySettingsViewModel
 import com.example.opdslibrary.viewmodel.StartScreenViewModel
 import java.net.URLEncoder
 import java.net.URLDecoder
@@ -126,21 +124,10 @@ fun AppNavigation(
                     navController.popBackStack()
                 },
                 onSettings = {
-                    navController.navigate("library_settings")
+                    navController.navigate("app_settings")
                 },
                 onBookClick = { bookId ->
                     navController.navigate("book_detail/$bookId")
-                }
-            )
-        }
-
-        // Library Settings screen
-        composable("library_settings") {
-            val settingsViewModel: LibrarySettingsViewModel = viewModel()
-            LibrarySettingsScreen(
-                viewModel = settingsViewModel,
-                onBack = {
-                    navController.popBackStack()
                 }
             )
         }

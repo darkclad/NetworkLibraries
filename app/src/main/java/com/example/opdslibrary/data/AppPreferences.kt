@@ -27,6 +27,8 @@ class AppPreferences(private val context: Context) {
         private val KEY_FORMAT_PRIORITY = stringPreferencesKey("format_priority")
         private val KEY_LIBRARY_BROWSE_MODE = stringPreferencesKey("library_browse_mode")
         private val KEY_LIBRARY_SORT_ORDER = stringPreferencesKey("library_sort_order")
+        private val KEY_PREFERRED_READER_PACKAGE = stringPreferencesKey("preferred_reader_package")
+        private val KEY_PREFERRED_READER_NAME = stringPreferencesKey("preferred_reader_name")
 
         // Defaults
         const val DEFAULT_PARALLEL_WORKERS = 4
@@ -225,5 +227,58 @@ class AppPreferences(private val context: Context) {
     suspend fun getLibrarySortOrderOnce(): String {
         val preferences = context.dataStore.data.first()
         return preferences[KEY_LIBRARY_SORT_ORDER] ?: "TITLE_ASC"
+    }
+
+    // ==================== Preferred Reader App Settings ====================
+
+    /**
+     * Flow of preferred reader app package name (null means use system chooser)
+     */
+    val preferredReaderPackage: Flow<String?> = context.dataStore.data
+        .map { preferences ->
+            preferences[KEY_PREFERRED_READER_PACKAGE]
+        }
+
+    /**
+     * Flow of preferred reader app display name
+     */
+    val preferredReaderName: Flow<String> = context.dataStore.data
+        .map { preferences ->
+            preferences[KEY_PREFERRED_READER_NAME] ?: "System Default (Ask Every Time)"
+        }
+
+    /**
+     * Set preferred reader app
+     * @param packageName App package name (null to clear)
+     * @param displayName Human-readable app name
+     */
+    suspend fun setPreferredReader(packageName: String?, displayName: String) {
+        context.dataStore.edit { preferences ->
+            if (packageName != null) {
+                preferences[KEY_PREFERRED_READER_PACKAGE] = packageName
+                preferences[KEY_PREFERRED_READER_NAME] = displayName
+            } else {
+                preferences.remove(KEY_PREFERRED_READER_PACKAGE)
+                preferences.remove(KEY_PREFERRED_READER_NAME)
+            }
+        }
+    }
+
+    /**
+     * Get preferred reader package synchronously
+     */
+    suspend fun getPreferredReaderPackageOnce(): String? {
+        val preferences = context.dataStore.data.first()
+        return preferences[KEY_PREFERRED_READER_PACKAGE]
+    }
+
+    /**
+     * Clear preferred reader (revert to system chooser)
+     */
+    suspend fun clearPreferredReader() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(KEY_PREFERRED_READER_PACKAGE)
+            preferences.remove(KEY_PREFERRED_READER_NAME)
+        }
     }
 }

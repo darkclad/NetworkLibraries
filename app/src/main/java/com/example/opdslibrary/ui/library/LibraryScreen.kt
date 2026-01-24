@@ -32,7 +32,9 @@ import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.opdslibrary.data.library.*
+import com.example.opdslibrary.data.AppPreferences
 import com.example.opdslibrary.ui.CustomSpinner
+import com.example.opdslibrary.utils.BookOpener
 import com.example.opdslibrary.viewmodel.LibraryViewModel
 import com.example.opdslibrary.viewmodel.LibraryViewModel.BrowseMode
 import com.example.opdslibrary.viewmodel.LibraryViewModel.SortOrder
@@ -64,6 +66,10 @@ fun LibraryScreen(
     var showBrowseMenu by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+
+    // Preferred reader app
+    val appPreferences = remember { AppPreferences(context) }
+    val preferredReaderPackage by appPreferences.preferredReaderPackage.collectAsState(initial = null)
 
     // Display list based on mode
     val displayBooks = when (uiState.browseMode) {
@@ -352,16 +358,11 @@ fun LibraryScreen(
                         onBookClick = { onBookClick(it.book.id) },
                         onOpenBook = { book ->
                             // Open book in external reader
-                            try {
-                                val uri = Uri.parse(book.book.filePath)
-                                val intent = Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(uri, getMimeType(book.book.filePath))
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                // Handle error
-                            }
+                            BookOpener.openBook(
+                                context = context,
+                                filePath = book.book.filePath,
+                                preferredPackage = preferredReaderPackage
+                            )
                         },
                         hasMore = if (isRecentMode) uiState.hasMoreRecentBooks else false,
                         isLoadingMore = if (isRecentMode) uiState.isLoadingMoreRecent else false,

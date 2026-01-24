@@ -18,7 +18,11 @@ interface AuthorDao {
         SELECT a.*, COUNT(ba.bookId) as bookCount
         FROM authors a
         INNER JOIN book_authors ba ON a.id = ba.authorId
+        INNER JOIN books b ON ba.bookId = b.id
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
         GROUP BY a.id
+        HAVING bookCount > 0
         ORDER BY a.sortName ASC
     """)
     fun getAllAuthorsWithBookCount(): Flow<List<AuthorWithBookCount>>
@@ -52,10 +56,22 @@ interface AuthorDao {
     """)
     suspend fun getAuthorsForBookByRole(bookId: Long, role: String): List<Author>
 
-    @Query("SELECT COUNT(*) FROM authors")
+    @Query("""
+        SELECT COUNT(DISTINCT a.id) FROM authors a
+        INNER JOIN book_authors ba ON a.id = ba.authorId
+        INNER JOIN books b ON ba.bookId = b.id
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+    """)
     suspend fun getAuthorCountOnce(): Int
 
-    @Query("SELECT COUNT(*) FROM authors")
+    @Query("""
+        SELECT COUNT(DISTINCT a.id) FROM authors a
+        INNER JOIN book_authors ba ON a.id = ba.authorId
+        INNER JOIN books b ON ba.bookId = b.id
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+    """)
     fun getAuthorCount(): Flow<Int>
 
     // === Insert/Update/Delete ===

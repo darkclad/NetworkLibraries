@@ -32,7 +32,20 @@
       "WebSearch",
       "Bash(powershell.exe -Command '& {$env:JAVA_HOME=\"\"C:\\Program Files\\Android\\Android Studio\\jbr\"\"; .\\gradlew.bat compileDebugKotlin 2>&1}')",
       "Bash(powershell.exe -Command '& {$env:JAVA_HOME=\"\"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"\"; .\\\\gradlew.bat assembleRelease 2>&1}')",
-      "Bash(dir \"C:\\\\Users\\\\dvladi\\\\AndroidStudioProjects\\\\opdsLibrary\\\\app\\\\build\\\\outputs\\\\apk\\\\release\"\" /b)"
+      "Bash(dir \"C:\\\\Users\\\\dvladi\\\\AndroidStudioProjects\\\\opdsLibrary\\\\app\\\\build\\\\outputs\\\\apk\\\\release\"\" /b)",
+      "Bash(git remote set-url:*)",
+      "Bash(powershell.exe -Command '& {$env:JAVA_HOME=\"\"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"\"; & \"\"$env:JAVA_HOME\\\\bin\\\\keytool.exe\"\" -genkey -v -keystore release-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias opds-library -storepass opdslib123 -keypass opdslib123 -dname \"\"CN=OPDS Library, OU=Development, O=Personal, L=Unknown, ST=Unknown, C=US\"\" 2>&1}')",
+      "Bash(powershell.exe -Command '& {$env:JAVA_HOME=\"\"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"\"; .\\\\gradlew.bat clean assembleRelease 2>&1}')",
+      "Bash(powershell.exe -Command '& {$env:JAVA_HOME=\"\"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"\"; .\\\\gradlew.bat --stop 2>&1}')",
+      "Bash(gradlew.bat compileDebugKotlin:*)",
+      "Bash(C:/Users/dvladi/AndroidStudioProjects/opdsLibrary/gradlew.bat:*)",
+      "Bash(export JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\")",
+      "Bash(set \"JAVA_HOME=C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\")",
+      "Bash(gradlew.bat assembleRelease:*)",
+      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\" ./gradlew.bat:*)",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr'' -ErrorAction SilentlyContinue\")",
+      "Bash(powershell.exe -Command:*)",
+      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\" C:/Users/dvladi/AndroidStudioProjects/opdsLibrary/gradlew.bat:*)"
     ],
     "deny": [],
     "ask": []

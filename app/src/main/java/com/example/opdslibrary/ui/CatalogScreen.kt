@@ -90,6 +90,7 @@ import com.example.opdslibrary.utils.DownloadManager as AppDownloadManager
 import com.example.opdslibrary.utils.DownloadItem
 import com.example.opdslibrary.utils.DownloadStatus
 import com.example.opdslibrary.utils.FormatSelector
+import com.example.opdslibrary.utils.BookOpener
 import com.example.opdslibrary.data.AppPreferences
 import com.example.opdslibrary.viewmodel.CatalogUiState
 import com.example.opdslibrary.viewmodel.CatalogViewModel
@@ -147,6 +148,10 @@ fun CatalogScreen(
     var showSearchDialog by remember { mutableStateOf(false) }
     var recentSearches by remember { mutableStateOf<List<String>>(emptyList()) }
     val coroutineScope = rememberCoroutineScope()
+
+    // Preferred reader app
+    val appPreferences = remember { AppPreferences(context) }
+    val preferredReaderPackage by appPreferences.preferredReaderPackage.collectAsState(initial = null)
 
     // Auto-hide favorites overlay after 3 seconds
     LaunchedEffect(showFavoritesOverlay) {
@@ -339,30 +344,13 @@ fun CatalogScreen(
                                 Toast.makeText(context, "Book $filename downloaded", Toast.LENGTH_SHORT).show()
                             },
                             onOpenBook = { localBook ->
-                                // Open the book file using an intent
-                                try {
-                                    val fileUri = if (localBook.filePath.startsWith("content://")) {
-                                        Uri.parse(localBook.filePath)
-                                    } else {
-                                        val file = java.io.File(localBook.filePath)
-                                        FileProvider.getUriForFile(
-                                            context,
-                                            "${context.packageName}.provider",
-                                            file
-                                        )
-                                    }
-                                    val mimeType = getMimeType(localBook.filePath)
-                                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                                        setDataAndType(fileUri, mimeType)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(intent)
-                                    Log.d("CatalogScreen", "Opening book: ${localBook.title} at ${localBook.filePath}")
-                                } catch (e: Exception) {
-                                    Log.e("CatalogScreen", "Failed to open book", e)
-                                    Toast.makeText(context, "No app found to open this book", Toast.LENGTH_SHORT).show()
-                                }
+                                // Open the book file using BookOpener
+                                BookOpener.openBook(
+                                    context = context,
+                                    filePath = localBook.filePath,
+                                    preferredPackage = preferredReaderPackage
+                                )
+                                Log.d("CatalogScreen", "Opening book: ${localBook.title} at ${localBook.filePath}")
                             }
                         )
                     } else {
@@ -497,30 +485,13 @@ fun CatalogScreen(
                             )
                         },
                         onOpenBook = { book ->
-                            // Open the book file using an intent
-                            try {
-                                val fileUri = if (book.filePath.startsWith("content://")) {
-                                    Uri.parse(book.filePath)
-                                } else {
-                                    val file = java.io.File(book.filePath)
-                                    FileProvider.getUriForFile(
-                                        context,
-                                        "${context.packageName}.provider",
-                                        file
-                                    )
-                                }
-                                val mimeType = getMimeType(book.filePath)
-                                val intent = Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(fileUri, mimeType)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                context.startActivity(intent)
-                                Log.d("CatalogScreen", "Opening book: ${book.title} at ${book.filePath}")
-                            } catch (e: Exception) {
-                                Log.e("CatalogScreen", "Failed to open book", e)
-                                Toast.makeText(context, "No app found to open this book", Toast.LENGTH_SHORT).show()
-                            }
+                            // Open the book file using BookOpener
+                            BookOpener.openBook(
+                                context = context,
+                                filePath = book.filePath,
+                                preferredPackage = preferredReaderPackage
+                            )
+                            Log.d("CatalogScreen", "Opening book: ${book.title} at ${book.filePath}")
                         }
                     )
                         }

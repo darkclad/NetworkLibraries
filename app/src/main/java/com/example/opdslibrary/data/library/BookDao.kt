@@ -18,34 +18,66 @@ interface BookDao {
     fun getAllBooksRecentFirst(): Flow<List<Book>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY titleSort ASC")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.titleSort ASC
+    """)
     fun getAllBooksWithDetails(): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY titleSort ASC")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.titleSort ASC
+    """)
     fun getAllBooksWithDetailsByTitle(): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY titleSort DESC")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.titleSort DESC
+    """)
     fun getAllBooksWithDetailsByTitleDesc(): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY addedAt DESC")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.addedAt DESC
+    """)
     fun getAllBooksWithDetailsRecentFirst(): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY addedAt DESC")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.addedAt DESC
+    """)
     fun getAllBooksWithDetailsByDateDesc(): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY addedAt ASC")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.addedAt ASC
+    """)
     fun getAllBooksWithDetailsByDate(): Flow<List<BookWithDetails>>
 
     @Transaction
     @Query("""
         SELECT DISTINCT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
         LEFT JOIN book_authors ba ON b.id = ba.bookId
         LEFT JOIN authors a ON ba.authorId = a.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
         ORDER BY a.sortName ASC, b.titleSort ASC
     """)
     fun getAllBooksWithDetailsByAuthor(): Flow<List<BookWithDetails>>
@@ -53,8 +85,10 @@ interface BookDao {
     @Transaction
     @Query("""
         SELECT DISTINCT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
         LEFT JOIN book_authors ba ON b.id = ba.bookId
         LEFT JOIN authors a ON ba.authorId = a.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
         ORDER BY a.sortName DESC, b.titleSort ASC
     """)
     fun getAllBooksWithDetailsByAuthorDesc(): Flow<List<BookWithDetails>>
@@ -79,18 +113,29 @@ interface BookDao {
     fun getBooksBySeries(seriesId: Long): Flow<List<Book>>
 
     @Transaction
-    @Query("SELECT * FROM books WHERE seriesId = :seriesId ORDER BY seriesNumber ASC")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.seriesId = :seriesId AND (b.scanFolderId IS NULL OR sf.enabled = 1)
+        ORDER BY b.seriesNumber ASC
+    """)
     fun getBooksWithDetailsBySeries(seriesId: Long): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books WHERE seriesId = :seriesId ORDER BY seriesNumber ASC")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.seriesId = :seriesId AND (b.scanFolderId IS NULL OR sf.enabled = 1)
+        ORDER BY b.seriesNumber ASC
+    """)
     fun getBooksForSeries(seriesId: Long): Flow<List<BookWithDetails>>
 
     @Transaction
     @Query("""
         SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
         INNER JOIN book_authors ba ON b.id = ba.bookId
-        WHERE ba.authorId = :authorId
+        WHERE ba.authorId = :authorId AND (b.scanFolderId IS NULL OR sf.enabled = 1)
         ORDER BY b.titleSort ASC
     """)
     fun getBooksForAuthor(authorId: Long): Flow<List<BookWithDetails>>
@@ -98,31 +143,55 @@ interface BookDao {
     @Transaction
     @Query("""
         SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
         INNER JOIN book_genres bg ON b.id = bg.bookId
-        WHERE bg.genreId = :genreId
+        WHERE bg.genreId = :genreId AND (b.scanFolderId IS NULL OR sf.enabled = 1)
         ORDER BY b.titleSort ASC
     """)
     fun getBooksForGenre(genreId: Long): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY addedAt DESC LIMIT :limit")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.addedAt DESC LIMIT :limit
+    """)
     fun getRecentBooks(limit: Int): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY addedAt DESC LIMIT :limit OFFSET :offset")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.addedAt DESC LIMIT :limit OFFSET :offset
+    """)
     fun getRecentBooksPaged(limit: Int, offset: Int): Flow<List<BookWithDetails>>
 
     @Transaction
-    @Query("SELECT * FROM books ORDER BY addedAt DESC LIMIT :limit OFFSET :offset")
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.addedAt DESC LIMIT :limit OFFSET :offset
+    """)
     suspend fun getRecentBooksPagedOnce(limit: Int, offset: Int): List<BookWithDetails>
 
     @Query("SELECT * FROM books WHERE downloadedViaApp = 1 ORDER BY addedAt DESC")
     fun getDownloadedBooks(): Flow<List<Book>>
 
-    @Query("SELECT COUNT(*) FROM books")
+    @Query("""
+        SELECT COUNT(*) FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+    """)
     suspend fun getBookCountOnce(): Int
 
-    @Query("SELECT COUNT(*) FROM books")
+    @Query("""
+        SELECT COUNT(*) FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+    """)
     fun getBookCount(): Flow<Int>
 
     @Query("SELECT COUNT(*) FROM books WHERE downloadedViaApp = 1")

@@ -16,6 +16,8 @@ import com.example.opdslibrary.library.parser.BookParserFactory
 import com.example.opdslibrary.library.search.BookIndexData
 import com.example.opdslibrary.library.search.BookSearchManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Background worker for scanning library folders
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class LibraryScanWorker(
     private val context: Context,
     params: WorkerParameters
@@ -133,63 +136,74 @@ class LibraryScanWorker(
             return
         }
 
-        val filesToProcess = mutableListOf<DocumentFile>()
-
-        // Collect all supported files
-        collectFiles(documentFile, filesToProcess)
-        val totalCount = filesToProcess.size
-
-        Log.d(TAG, "Found $totalCount files to process")
-
-        // Report total count immediately after counting
-        setProgress(workDataOf(
-            KEY_FOLDER_NAME to folder.displayName,
-            KEY_PROCESSED_COUNT to 0,
-            KEY_TOTAL_COUNT to totalCount,
-            KEY_STATUS to STATUS_SCANNING
-        ))
-
-        // Use atomic counter for thread-safe progress tracking
-        val processedCount = AtomicInteger(0)
-
         // Get number of parallel workers from preferences
         val parallelWorkers = appPreferences.getScanParallelWorkersOnce()
         Log.d(TAG, "Using $parallelWorkers parallel workers for scanning")
 
-        // Semaphore to limit concurrent file processing
-        val semaphore = Semaphore(parallelWorkers)
+        // Use atomic counters for thread-safe progress tracking
+        val discoveredCount = AtomicInteger(0)
+        val processedCount = AtomicInteger(0)
 
         // Mutex for database operations to prevent conflicts
         val dbMutex = Mutex()
 
-        // Process files in parallel
+        // Channel for producer-consumer pattern
+        // Buffer size allows directory scanning to get ahead of processing
+        val fileChannel = Channel<DocumentFile>(capacity = parallelWorkers * 4)
+
         coroutineScope {
-            filesToProcess.map { file ->
-                async(Dispatchers.IO) {
-                    semaphore.withPermit {
+            // Producer: Parallel directory traversal
+            val producerJob = launch(Dispatchers.IO) {
+                try {
+                    collectFilesParallel(documentFile, fileChannel, discoveredCount, parallelWorkers)
+                } finally {
+                    fileChannel.close()
+                    Log.d(TAG, "Directory scan complete. Found ${discoveredCount.get()} files")
+                }
+            }
+
+            // Consumers: Process files as they arrive
+            val consumers = List(parallelWorkers) { workerId ->
+                launch(Dispatchers.IO) {
+                    for (file in fileChannel) {
                         try {
                             processFileParallel(file, file.uri, folder.id, fullScan, dbMutex)
                             val currentCount = processedCount.incrementAndGet()
+                            val totalFound = discoveredCount.get()
 
-                            // Update progress every 5 files or at the end
-                            if (currentCount % 5 == 0 || currentCount == totalCount) {
+                            // Update progress every 5 files
+                            if (currentCount % 5 == 0) {
                                 setProgress(workDataOf(
                                     KEY_FOLDER_NAME to folder.displayName,
                                     KEY_PROCESSED_COUNT to currentCount,
-                                    KEY_TOTAL_COUNT to totalCount,
+                                    KEY_TOTAL_COUNT to totalFound,
                                     KEY_CURRENT_FILE to (file.name ?: ""),
                                     KEY_STATUS to STATUS_SCANNING
                                 ))
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Error processing file: ${file.name}", e)
+                            Log.e(TAG, "Worker $workerId error processing file: ${file.name}", e)
                         }
                     }
                 }
-            }.awaitAll()
+            }
+
+            // Wait for producer to finish
+            producerJob.join()
+
+            // Wait for all consumers to finish
+            consumers.forEach { it.join() }
         }
 
         val finalCount = processedCount.get()
+
+        // Final progress update
+        setProgress(workDataOf(
+            KEY_FOLDER_NAME to folder.displayName,
+            KEY_PROCESSED_COUNT to finalCount,
+            KEY_TOTAL_COUNT to finalCount,
+            KEY_STATUS to STATUS_SCANNING
+        ))
 
         // Update folder stats
         scanFolderDao.updateScanStats(
@@ -246,7 +260,8 @@ class LibraryScanWorker(
                 fileSize = file.length(),
                 fileModified = file.lastModified(),
                 metadata = metadata,
-                existingId = existing?.id
+                existingId = existing?.id,
+                scanFolderId = folderId
             )
         }
 
@@ -262,6 +277,82 @@ class LibraryScanWorker(
         }
     }
 
+    /**
+     * Parallel directory traversal using coroutines.
+     * Scans directories concurrently and streams files to the channel.
+     */
+    private suspend fun collectFilesParallel(
+        rootDir: DocumentFile,
+        fileChannel: Channel<DocumentFile>,
+        discoveredCount: AtomicInteger,
+        parallelism: Int
+    ) {
+        // Channel for directories to scan
+        val dirChannel = Channel<DocumentFile>(capacity = Channel.UNLIMITED)
+
+        // Semaphore to limit concurrent directory scans
+        val dirSemaphore = Semaphore(parallelism)
+
+        // Track active directory scan jobs
+        val activeJobs = AtomicInteger(1) // Start with 1 for root dir
+
+        coroutineScope {
+            // Seed with root directory
+            dirChannel.send(rootDir)
+
+            // Directory scanner workers
+            val scanners = List(parallelism) { workerId ->
+                launch(Dispatchers.IO) {
+                    while (true) {
+                        val dir = try {
+                            dirChannel.tryReceive().getOrNull()
+                        } catch (e: Exception) {
+                            null
+                        }
+
+                        if (dir == null) {
+                            // No directory available, check if we should exit
+                            if (activeJobs.get() == 0 && dirChannel.isEmpty) {
+                                break
+                            }
+                            // Brief yield to allow other coroutines to add directories
+                            yield()
+                            continue
+                        }
+
+                        dirSemaphore.withPermit {
+                            try {
+                                val files = dir.listFiles()
+                                for (file in files) {
+                                    if (file.isDirectory) {
+                                        // Add subdirectory to queue
+                                        activeJobs.incrementAndGet()
+                                        dirChannel.send(file)
+                                    } else if (file.name != null && BookParserFactory.isSupported(file.name!!)) {
+                                        // Send file to processing channel
+                                        discoveredCount.incrementAndGet()
+                                        fileChannel.send(file)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Error scanning directory: ${dir.name}", e)
+                            } finally {
+                                activeJobs.decrementAndGet()
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Wait for all scanners to complete
+            scanners.forEach { it.join() }
+            dirChannel.close()
+        }
+    }
+
+    /**
+     * Legacy sequential file collection (kept for compatibility)
+     */
     private fun collectFiles(dir: DocumentFile, files: MutableList<DocumentFile>) {
         dir.listFiles().forEach { file ->
             if (file.isDirectory) {
@@ -313,7 +404,8 @@ class LibraryScanWorker(
             fileSize = file.length(),
             fileModified = file.lastModified(),
             metadata = metadata,
-            existingId = existing?.id
+            existingId = existing?.id,
+            scanFolderId = folderId
         )
 
         // Get related data for indexing
@@ -435,6 +527,7 @@ class LibraryScanWorker(
         fileModified: Long,
         metadata: com.example.opdslibrary.library.parser.BookMetadata,
         existingId: Long? = null,
+        scanFolderId: Long? = null,
         downloadedViaApp: Boolean = false,
         opdsEntryId: String? = null,
         catalogId: Long? = null,
@@ -462,6 +555,7 @@ class LibraryScanWorker(
             description = metadata.description,
             seriesId = seriesId,
             seriesNumber = metadata.series?.number,
+            scanFolderId = scanFolderId,
             metadataSource = BookParserFactory.getMetadataSource(uri.lastPathSegment ?: ""),
             indexedAt = System.currentTimeMillis(),
             needsReindex = false,

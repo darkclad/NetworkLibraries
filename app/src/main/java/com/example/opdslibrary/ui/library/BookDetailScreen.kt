@@ -2,6 +2,8 @@ package com.example.opdslibrary.ui.library
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,18 +14,25 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.opdslibrary.data.library.BookWithDetails
+import com.example.opdslibrary.data.AppPreferences
 import com.example.opdslibrary.ui.CustomSpinner
+import com.example.opdslibrary.utils.BookOpener
 import com.example.opdslibrary.viewmodel.LibraryViewModel
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -42,7 +51,15 @@ fun BookDetailScreen(
 ) {
     var bookWithDetails by remember { mutableStateOf<BookWithDetails?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var newFileName by remember { mutableStateOf("") }
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+
+    // Preferred reader app
+    val appPreferences = remember { AppPreferences(context) }
+    val preferredReaderPackage by appPreferences.preferredReaderPackage.collectAsState(initial = null)
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(bookId) {
         bookWithDetails = viewModel.getBookDetails(bookId)
@@ -198,16 +215,11 @@ fun BookDetailScreen(
                 // Open button
                 Button(
                     onClick = {
-                        try {
-                            val uri = Uri.parse(book.filePath)
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, getMimeType(book.filePath))
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            // Handle error
-                        }
+                        BookOpener.openBook(
+                            context = context,
+                            filePath = book.filePath,
+                            preferredPackage = preferredReaderPackage
+                        )
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -273,6 +285,102 @@ fun BookDetailScreen(
                 }
                 book.isbn?.let { isbn ->
                     DetailRow("ISBN", isbn)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // File location section
+                Text(
+                    text = "File Location",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // File name with rename option
+                val fileName = book.filePath.substringAfterLast("/").substringAfterLast("\\")
+                val folderPath = book.filePath.substringBeforeLast("/").substringBeforeLast("\\")
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        // File name row with rename button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "File name",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = fileName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            // Only show rename for regular files, not content:// URIs
+                            if (!book.filePath.startsWith("content://")) {
+                                IconButton(
+                                    onClick = {
+                                        newFileName = fileName
+                                        showRenameDialog = true
+                                    }
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "Rename file",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Folder path
+                        Text(
+                            text = "Folder",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = folderPath,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Copy path button
+                        OutlinedButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(book.filePath))
+                                Toast.makeText(context, "Path copied to clipboard", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Copy Full Path")
+                        }
+                    }
                 }
 
                 // View in Catalog button (if book has navigation history)
@@ -372,6 +480,81 @@ fun BookDetailScreen(
             }
         )
     }
+
+    // Rename file dialog
+    if (showRenameDialog) {
+        val currentBook = bookWithDetails?.book
+        val currentPath = currentBook?.filePath ?: ""
+        val currentExtension = getFileExtension(currentPath)
+
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename File") },
+            text = {
+                Column {
+                    Text(
+                        text = "Enter new file name:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = newFileName,
+                        onValueChange = { newFileName = it },
+                        label = { Text("File name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Note: The file extension ($currentExtension) should be preserved.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (newFileName.isNotBlank() && currentBook != null) {
+                            val trimmedName = newFileName.trim()
+                            // Ensure the extension is preserved
+                            val finalName = if (!trimmedName.lowercase().endsWith(currentExtension.lowercase())) {
+                                "$trimmedName$currentExtension"
+                            } else {
+                                trimmedName
+                            }
+
+                            viewModel.renameBookFile(
+                                bookId = currentBook.id,
+                                currentPath = currentPath,
+                                newFileName = finalName,
+                                onSuccess = {
+                                    Toast.makeText(context, "File renamed successfully", Toast.LENGTH_SHORT).show()
+                                    // Refresh book details
+                                    coroutineScope.launch {
+                                        bookWithDetails = viewModel.getBookDetails(bookId)
+                                    }
+                                },
+                                onError = { error ->
+                                    Toast.makeText(context, "Rename failed: $error", Toast.LENGTH_LONG).show()
+                                }
+                            )
+                        }
+                        showRenameDialog = false
+                    },
+                    enabled = newFileName.isNotBlank()
+                ) {
+                    Text("Rename")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -442,6 +625,21 @@ private fun getLinkDisplayName(rel: String?, href: String): String {
             // Extract meaningful part from href
             val path = href.substringAfterLast("/").substringBefore("?")
             if (path.isNotEmpty()) path else "Link"
+        }
+    }
+}
+
+private fun getFileExtension(path: String): String {
+    val lower = path.lowercase()
+    return when {
+        lower.endsWith(".fb2.zip") -> ".fb2.zip"
+        else -> {
+            val lastDot = path.lastIndexOf('.')
+            if (lastDot > 0 && lastDot < path.length - 1) {
+                path.substring(lastDot)
+            } else {
+                ""
+            }
         }
     }
 }

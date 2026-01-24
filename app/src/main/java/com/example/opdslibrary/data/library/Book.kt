@@ -16,6 +16,7 @@ import com.google.gson.reflect.TypeToken
         Index("filePath", unique = true),
         Index("fileHash"),
         Index("seriesId"),
+        Index("scanFolderId"),
         Index("needsReindex"),
         Index("titleSort"),
         Index("opdsEntryId"),
@@ -27,6 +28,12 @@ import com.google.gson.reflect.TypeToken
             parentColumns = ["id"],
             childColumns = ["seriesId"],
             onDelete = ForeignKey.SET_NULL
+        ),
+        ForeignKey(
+            entity = ScanFolder::class,
+            parentColumns = ["id"],
+            childColumns = ["scanFolderId"],
+            onDelete = ForeignKey.CASCADE
         )
     ]
 )
@@ -51,6 +58,9 @@ data class Book(
     // Series information
     val seriesId: Long? = null,        // FK to series table
     val seriesNumber: Float? = null,   // Position in series (float for "1.5")
+
+    // Scan folder reference
+    val scanFolderId: Long? = null,    // FK to scan_folders table (null for downloaded books)
 
     // Metadata tracking
     val metadataSource: String,        // "fb2", "epub", "pdf", "mobi", "filename"

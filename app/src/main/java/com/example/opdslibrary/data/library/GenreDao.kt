@@ -24,7 +24,11 @@ interface GenreDao {
         SELECT g.*, COUNT(bg.bookId) as bookCount
         FROM genres g
         INNER JOIN book_genres bg ON g.id = bg.genreId
+        INNER JOIN books b ON bg.bookId = b.id
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
         GROUP BY g.id
+        HAVING bookCount > 0
         ORDER BY g.name ASC
     """)
     fun getAllGenresWithBookCount(): Flow<List<GenreWithBookCount>>
@@ -33,8 +37,11 @@ interface GenreDao {
         SELECT g.*, COUNT(bg.bookId) as bookCount
         FROM genres g
         INNER JOIN book_genres bg ON g.id = bg.genreId
-        WHERE g.parentId IS NULL
+        INNER JOIN books b ON bg.bookId = b.id
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE g.parentId IS NULL AND (b.scanFolderId IS NULL OR sf.enabled = 1)
         GROUP BY g.id
+        HAVING bookCount > 0
         ORDER BY bookCount DESC
     """)
     fun getTopGenresWithBookCount(): Flow<List<GenreWithBookCount>>

@@ -436,6 +436,70 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Rename a book file and update the database
+     */
+    fun renameBookFile(
+        bookId: Long,
+        currentPath: String,
+        newFileName: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                // Don't allow renaming content:// URIs
+                if (currentPath.startsWith("content://")) {
+                    withContext(Dispatchers.Main) {
+                        onError("Cannot rename files stored via SAF")
+                    }
+                    return@launch
+                }
+
+                val currentFile = java.io.File(currentPath)
+                if (!currentFile.exists()) {
+                    withContext(Dispatchers.Main) {
+                        onError("File not found")
+                    }
+                    return@launch
+                }
+
+                val parentDir = currentFile.parentFile
+                val newFile = java.io.File(parentDir, newFileName)
+
+                // Check if target already exists
+                if (newFile.exists() && newFile.absolutePath != currentFile.absolutePath) {
+                    withContext(Dispatchers.Main) {
+                        onError("A file with this name already exists")
+                    }
+                    return@launch
+                }
+
+                // Rename the file
+                val success = currentFile.renameTo(newFile)
+                if (!success) {
+                    withContext(Dispatchers.Main) {
+                        onError("Failed to rename file")
+                    }
+                    return@launch
+                }
+
+                // Update the database
+                bookDao.updateFilePath(bookId, newFile.absolutePath)
+                Log.d(TAG, "Renamed book file: $currentPath -> ${newFile.absolutePath}")
+
+                withContext(Dispatchers.Main) {
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to rename book file", e)
+                withContext(Dispatchers.Main) {
+                    onError(e.message ?: "Unknown error")
+                }
+            }
+        }
+    }
+
+    /**
      * Clear all books from the library
      */
     fun clearLibrary() {

@@ -18,7 +18,10 @@ interface SeriesDao {
         SELECT s.*, COUNT(b.id) as bookCount
         FROM series s
         INNER JOIN books b ON s.id = b.seriesId
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
         GROUP BY s.id
+        HAVING bookCount > 0
         ORDER BY s.name ASC
     """)
     fun getAllSeriesWithBookCount(): Flow<List<SeriesWithBookCount>>
@@ -32,10 +35,20 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE name LIKE '%' || :query || '%' ORDER BY name ASC")
     fun searchSeries(query: String): Flow<List<Series>>
 
-    @Query("SELECT COUNT(*) FROM series")
+    @Query("""
+        SELECT COUNT(DISTINCT s.id) FROM series s
+        INNER JOIN books b ON s.id = b.seriesId
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+    """)
     suspend fun getSeriesCountOnce(): Int
 
-    @Query("SELECT COUNT(*) FROM series")
+    @Query("""
+        SELECT COUNT(DISTINCT s.id) FROM series s
+        INNER JOIN books b ON s.id = b.seriesId
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+    """)
     fun getSeriesCount(): Flow<Int>
 
     // === Insert/Update/Delete ===

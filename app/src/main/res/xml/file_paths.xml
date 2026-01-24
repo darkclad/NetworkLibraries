@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Cache directory for temporary book files shared with reader apps -->
+    <cache-path name="book_cache" path="books/" />
+
+    <!-- Internal files directory for covers and other app files -->
+    <files-path name="covers" path="covers/" />
+
+    <!-- App-specific external files directory -->
+    <external-files-path name="external_books" path="." />
+
+    <!-- External storage root (for files in Download folder, etc.) -->
+    <external-path name="external_storage" path="." />
+</paths>
