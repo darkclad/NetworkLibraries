@@ -181,7 +181,7 @@ class BookDownloader(private val context: Context) {
             existingFile?.delete()
 
             // Determine MIME type
-            val mimeType = getMimeType(filename)
+            val mimeType = FilenameUtils.getMimeType(filename)
 
             // Create new file
             val newFile = documentFolder.createFile(mimeType, filename)
@@ -274,20 +274,4 @@ class BookDownloader(private val context: Context) {
         }
     }
 
-    /**
-     * Get MIME type for a filename
-     */
-    private fun getMimeType(filename: String): String {
-        val lowerName = filename.lowercase()
-        return when {
-            lowerName.endsWith(".fb2.zip") -> "application/zip"
-            lowerName.endsWith(".fb2") -> "application/x-fictionbook+xml"
-            lowerName.endsWith(".epub") -> "application/epub+zip"
-            lowerName.endsWith(".pdf") -> "application/pdf"
-            lowerName.endsWith(".mobi") -> "application/x-mobipocket-ebook"
-            lowerName.endsWith(".azw3") -> "application/vnd.amazon.ebook"
-            lowerName.endsWith(".zip") -> "application/zip"
-            else -> "application/octet-stream"
-        }
-    }
 }

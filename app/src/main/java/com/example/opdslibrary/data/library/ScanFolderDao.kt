@@ -14,9 +14,6 @@ interface ScanFolderDao {
     @Query("SELECT * FROM scan_folders ORDER BY displayName ASC")
     fun getAllFolders(): Flow<List<ScanFolder>>
 
-    @Query("SELECT * FROM scan_folders WHERE enabled = 1 ORDER BY displayName ASC")
-    fun getEnabledFolders(): Flow<List<ScanFolder>>
-
     @Query("SELECT * FROM scan_folders WHERE enabled = 1")
     suspend fun getEnabledFoldersOnce(): List<ScanFolder>
 

@@ -11,9 +11,6 @@ interface AuthorDao {
 
     // === Query Methods ===
 
-    @Query("SELECT * FROM authors ORDER BY sortName ASC")
-    fun getAllAuthors(): Flow<List<Author>>
-
     @Query("""
         SELECT a.*, COUNT(ba.bookId) as bookCount
         FROM authors a
@@ -63,24 +60,12 @@ interface AuthorDao {
         LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
         WHERE b.scanFolderId IS NULL OR sf.enabled = 1
     """)
-    suspend fun getAuthorCountOnce(): Int
-
-    @Query("""
-        SELECT COUNT(DISTINCT a.id) FROM authors a
-        INNER JOIN book_authors ba ON a.id = ba.authorId
-        INNER JOIN books b ON ba.bookId = b.id
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
-    """)
     fun getAuthorCount(): Flow<Int>
 
     // === Insert/Update/Delete ===
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(author: Author): Long
-
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAll(authors: List<Author>): List<Long>
 
     @Update
     suspend fun update(author: Author)
@@ -101,9 +86,6 @@ interface AuthorDao {
 
     @Query("DELETE FROM book_authors WHERE bookId = :bookId")
     suspend fun deleteBookAuthors(bookId: Long)
-
-    @Query("DELETE FROM book_authors WHERE bookId = :bookId AND authorId = :authorId")
-    suspend fun deleteBookAuthor(bookId: Long, authorId: Long)
 
     // === Cleanup Orphans ===
 

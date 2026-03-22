@@ -46,6 +46,7 @@ class LibraryScanWorker(
         const val KEY_OPDS_CATALOG_ID = "opds_catalog_id"
         const val KEY_OPDS_REL_LINKS = "opds_rel_links"
         const val KEY_OPDS_NAV_HISTORY = "opds_nav_history"
+        const val KEY_OPDS_UPDATED = "opds_updated"
 
         // Output/Progress keys
         const val KEY_FOLDER_NAME = "folder_name"
@@ -261,6 +262,7 @@ class LibraryScanWorker(
                 fileModified = file.lastModified(),
                 metadata = metadata,
                 existingId = existing?.id,
+                addedAt = existing?.addedAt ?: file.lastModified(),
                 scanFolderId = folderId
             )
         }
@@ -405,6 +407,7 @@ class LibraryScanWorker(
             fileModified = file.lastModified(),
             metadata = metadata,
             existingId = existing?.id,
+            addedAt = existing?.addedAt ?: file.lastModified(),
             scanFolderId = folderId
         )
 
@@ -426,8 +429,9 @@ class LibraryScanWorker(
         val catalogId = inputData.getLong(KEY_OPDS_CATALOG_ID, -1).takeIf { it > 0 }
         val opdsRelLinks = inputData.getString(KEY_OPDS_REL_LINKS)
         val opdsNavHistory = inputData.getString(KEY_OPDS_NAV_HISTORY)
+        val opdsUpdated = inputData.getLong(KEY_OPDS_UPDATED, -1).takeIf { it > 0 }
 
-        Log.d(TAG, "OPDS entry info: entryId=$opdsEntryId, catalogId=$catalogId, hasRelLinks=${opdsRelLinks != null}, hasNavHistory=${opdsNavHistory != null}")
+        Log.d(TAG, "OPDS entry info: entryId=$opdsEntryId, catalogId=$catalogId, hasRelLinks=${opdsRelLinks != null}, hasNavHistory=${opdsNavHistory != null}, opdsUpdated=$opdsUpdated")
 
         setProgress(workDataOf(
             KEY_STATUS to STATUS_SCANNING,
@@ -470,7 +474,8 @@ class LibraryScanWorker(
             opdsEntryId = opdsEntryId,
             catalogId = catalogId,
             opdsRelLinks = opdsRelLinks,
-            opdsNavigationHistory = opdsNavHistory
+            opdsNavigationHistory = opdsNavHistory,
+            opdsUpdated = opdsUpdated
         )
 
         // Get related data for indexing and organization
@@ -527,13 +532,20 @@ class LibraryScanWorker(
         fileModified: Long,
         metadata: com.example.opdslibrary.library.parser.BookMetadata,
         existingId: Long? = null,
+        addedAt: Long = fileModified,
         scanFolderId: Long? = null,
         downloadedViaApp: Boolean = false,
         opdsEntryId: String? = null,
         catalogId: Long? = null,
         opdsRelLinks: String? = null,
-        opdsNavigationHistory: String? = null
+        opdsNavigationHistory: String? = null,
+        opdsUpdated: Long? = null
     ): Long {
+        // Check if a book with the same opdsEntryId + catalogId already exists (re-download case)
+        val resolvedExistingId = existingId ?: if (opdsEntryId != null && catalogId != null) {
+            bookDao.getBookByOpdsEntry(opdsEntryId, catalogId)?.id
+        } else null
+
         // Handle series
         val seriesId = metadata.series?.let { seriesInfo ->
             val existing = seriesDao.findByName(seriesInfo.name)
@@ -542,7 +554,7 @@ class LibraryScanWorker(
 
         // Create or update book
         val book = Book(
-            id = existingId ?: 0,
+            id = resolvedExistingId ?: 0,
             filePath = uri.toString(),
             fileHash = hash,
             fileSize = fileSize,
@@ -559,9 +571,11 @@ class LibraryScanWorker(
             metadataSource = BookParserFactory.getMetadataSource(uri.lastPathSegment ?: ""),
             indexedAt = System.currentTimeMillis(),
             needsReindex = false,
+            addedAt = addedAt,
             downloadedViaApp = downloadedViaApp,
             catalogId = catalogId,
             opdsEntryId = opdsEntryId,
+            opdsUpdated = opdsUpdated,
             opdsRelLinks = opdsRelLinks,
             opdsNavigationHistory = opdsNavigationHistory
         )
@@ -569,8 +583,8 @@ class LibraryScanWorker(
         val bookId = bookDao.insert(book)
 
         // Handle authors
-        if (existingId != null) {
-            authorDao.deleteBookAuthors(existingId)
+        if (resolvedExistingId != null) {
+            authorDao.deleteBookAuthors(resolvedExistingId)
         }
 
         metadata.authors.forEach { authorInfo ->
@@ -593,8 +607,8 @@ class LibraryScanWorker(
         }
 
         // Handle genres
-        if (existingId != null) {
-            genreDao.deleteBookGenres(existingId)
+        if (resolvedExistingId != null) {
+            genreDao.deleteBookGenres(resolvedExistingId)
         }
 
         metadata.genres.forEach { genreName ->

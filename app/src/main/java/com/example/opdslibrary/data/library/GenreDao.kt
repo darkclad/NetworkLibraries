@@ -14,12 +14,6 @@ interface GenreDao {
     @Query("SELECT * FROM genres ORDER BY name ASC")
     fun getAllGenres(): Flow<List<Genre>>
 
-    @Query("SELECT * FROM genres WHERE parentId IS NULL ORDER BY name ASC")
-    fun getTopLevelGenres(): Flow<List<Genre>>
-
-    @Query("SELECT * FROM genres WHERE parentId = :parentId ORDER BY name ASC")
-    fun getChildGenres(parentId: Long): Flow<List<Genre>>
-
     @Query("""
         SELECT g.*, COUNT(bg.bookId) as bookCount
         FROM genres g
@@ -32,19 +26,6 @@ interface GenreDao {
         ORDER BY g.name ASC
     """)
     fun getAllGenresWithBookCount(): Flow<List<GenreWithBookCount>>
-
-    @Query("""
-        SELECT g.*, COUNT(bg.bookId) as bookCount
-        FROM genres g
-        INNER JOIN book_genres bg ON g.id = bg.genreId
-        INNER JOIN books b ON bg.bookId = b.id
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE g.parentId IS NULL AND (b.scanFolderId IS NULL OR sf.enabled = 1)
-        GROUP BY g.id
-        HAVING bookCount > 0
-        ORDER BY bookCount DESC
-    """)
-    fun getTopGenresWithBookCount(): Flow<List<GenreWithBookCount>>
 
     @Query("SELECT * FROM genres WHERE id = :genreId")
     suspend fun getGenreById(genreId: Long): Genre?
@@ -70,9 +51,6 @@ interface GenreDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(genre: Genre): Long
-
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAll(genres: List<Genre>): List<Long>
 
     @Update
     suspend fun update(genre: Genre)

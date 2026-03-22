@@ -20,18 +20,11 @@ data class OpdsFeed(
      * Get the next page link for pagination
      */
     fun getNextPageLink(): String? {
-        val nextLink = links.firstOrNull {
+        return links.firstOrNull {
             it.rel == "next" ||
             it.rel == "http://opds-spec.org/facet" ||
             it.type?.contains("application/atom+xml") == true && it.rel?.contains("next") == true
         }?.href
-
-        android.util.Log.d("OpdsFeed", "getNextPageLink: found=$nextLink, total links=${links.size}")
-        links.forEach { link ->
-            android.util.Log.d("OpdsFeed", "  Link: rel='${link.rel}', type='${link.type}', href='${link.href}'")
-        }
-
-        return nextLink
     }
 
     /**
@@ -184,8 +177,7 @@ data class OpdsLink(
 @Parcelize
 data class OpdsAuthor(
     val name: String = "",
-    val uri: String? = null,
-    val email: String? = null
+    val uri: String? = null
 ) : Parcelable
 
 /**

@@ -32,9 +32,11 @@ import kotlinx.coroutines.launch
         BookSearchIndex::class,
         BookSearchFts::class,
         // Search history
-        SearchHistory::class
+        SearchHistory::class,
+        // Last visited authors
+        LastVisitedAuthor::class
     ],
-    version = 16,
+    version = 18,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -51,6 +53,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun scanFolderDao(): ScanFolderDao
     abstract fun bookFtsDao(): BookFtsDao
     abstract fun searchHistoryDao(): SearchHistoryDao
+    abstract fun lastVisitedAuthorDao(): LastVisitedAuthorDao
 
     companion object {
         @Volatile
@@ -310,6 +313,47 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration from version 16 to 17: Add last visited authors table
+         */
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS last_visited_authors (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        catalogId INTEGER NOT NULL,
+                        authorName TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        feedTitle TEXT NOT NULL,
+                        navigationHistory TEXT NOT NULL,
+                        visitedAt INTEGER NOT NULL
+                    )
+                """)
+            }
+        }
+
+        /**
+         * Migration from version 17 to 18: Add unique index on (opdsEntryId, catalogId)
+         * and clean up duplicate book records
+         */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Delete duplicate books keeping the one with the highest id per (opdsEntryId, catalogId)
+                db.execSQL("""
+                    DELETE FROM books
+                    WHERE opdsEntryId IS NOT NULL
+                      AND catalogId IS NOT NULL
+                      AND id NOT IN (
+                          SELECT MAX(id) FROM books
+                          WHERE opdsEntryId IS NOT NULL AND catalogId IS NOT NULL
+                          GROUP BY opdsEntryId, catalogId
+                      )
+                """)
+                // Create unique index (NULLs are exempt from uniqueness in SQLite)
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_books_opdsEntryId_catalogId ON books(opdsEntryId, catalogId)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -317,8 +361,8 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "opds_library_database"
                 )
-                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
-                    .fallbackToDestructiveMigration()  // Keep as fallback for older versions
+                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+                    .fallbackToDestructiveMigration(dropAllTables = true)  // Keep as fallback for older versions
                     .addCallback(DatabaseCallback())
                     .build()
                 INSTANCE = instance
@@ -391,6 +435,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private suspend fun addDefaultCatalogs(catalogDao: CatalogDao) {
             // Flibusta (Russian books)
+            if (catalogDao.catalogExists("http://flibusta.is/opds") > 0) return
             catalogDao.insert(
                 OpdsCatalog(
                     url = "http://flibusta.is/opds",
@@ -440,18 +485,5 @@ abstract class AppDatabase : RoomDatabase() {
             )
         }
 
-        private suspend fun addFlibustaCatalog(catalogDao: CatalogDao) {
-            catalogDao.insert(
-                OpdsCatalog(
-                    url = "http://flibusta.is/opds",
-                    customName = null,
-                    opdsName = "Flibusta",
-                    iconUrl = "http://flibusta.is/favicon.ico",
-                    iconUpdated = null,
-                    isDefault = true,
-                    alternateUrl = "http://flibusta.net/opds"
-                )
-            )
-        }
     }
 }

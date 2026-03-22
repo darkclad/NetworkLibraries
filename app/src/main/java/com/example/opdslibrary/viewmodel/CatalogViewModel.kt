@@ -5,7 +5,9 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.opdslibrary.data.AppDatabase
+import com.example.opdslibrary.data.AppPreferences
 import com.example.opdslibrary.data.FavoriteEntry
+import com.example.opdslibrary.data.LastVisitedAuthor
 import com.example.opdslibrary.data.SerializableNavHistoryEntry
 import com.example.opdslibrary.data.OpdsLink
 import com.example.opdslibrary.data.OpdsCatalog
@@ -21,9 +23,9 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.example.opdslibrary.network.OpdsRepository
 import com.example.opdslibrary.network.UnauthorizedException
-import com.example.opdslibrary.utils.Constants
 import com.example.opdslibrary.image.ImageCacheManager
 import com.example.opdslibrary.image.ImageDownloadScheduler
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,10 +79,12 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     private val database = AppDatabase.getDatabase(application)
     private val catalogDao = database.catalogDao()
     private val favoriteDao = database.favoriteDao()
+    private val lastVisitedAuthorDao = database.lastVisitedAuthorDao()
     private val feedCacheDao = database.feedCacheDao()
     private val bookDao = database.bookDao()
     private val opdsParser = OpdsParser()
     private val gson = Gson()
+    private val appPreferences = AppPreferences(application.applicationContext)
 
     // Image caching
     private val imageCacheManager = ImageCacheManager(application.applicationContext)
@@ -150,6 +154,89 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     // Navigation history with entry indices for scroll restoration
     private val navigationHistory = mutableListOf<NavigationHistoryEntry>()
 
+    // OPDS page type and browsing context for smart matching
+    enum class OpdsPageType {
+        COLLECTION,     // Books from multiple authors (use broad matching)
+        AUTHOR_PAGE,    // Author's books - author in feed root (use author context)
+        BOOK_DETAIL     // Single book detail page (use full title matching)
+    }
+
+    data class OpdsBrowsingContext(
+        val pageType: OpdsPageType,
+        val authorName: String? = null,      // Set when browsing author page
+        val currentEntry: OpdsEntry? = null  // Set when viewing book detail
+    )
+
+    private var browsingContext = OpdsBrowsingContext(OpdsPageType.COLLECTION)
+
+    // OPDS matching processor for background filename matching
+    private var matchingProcessor: OpdsMatchingProcessor? = null
+
+    // Stable StateFlows exposed to the UI — updated whenever the processor is replaced
+    private val _matchingResults = MutableStateFlow<Map<String, MatchingResult>>(emptyMap())
+    val matchingResults: StateFlow<Map<String, MatchingResult>> = _matchingResults.asStateFlow()
+
+    private val _isMatchingInProgress = MutableStateFlow(false)
+    val isMatchingInProgress: StateFlow<Boolean> = _isMatchingInProgress.asStateFlow()
+
+    // Job that forwards the current processor's flows into the stable StateFlows
+    private var processorForwardingJob: Job? = null
+
+    /**
+     * Call whenever matchingProcessor is replaced to keep stable flows in sync.
+     * @param resetResults true when loading a new feed page (wipes old results);
+     *                     false when re-matching a single book detail (preserves list results).
+     */
+    private fun attachProcessor(processor: OpdsMatchingProcessor, resetResults: Boolean = true) {
+        processorForwardingJob?.cancel()
+        if (resetResults) {
+            _matchingResults.value = emptyMap()
+        }
+        _isMatchingInProgress.value = false
+        processorForwardingJob = viewModelScope.launch {
+            launch {
+                processor.results.collect { map ->
+                    _matchingResults.value = if (resetResults) {
+                        // Full feed load: replace entirely with processor's results
+                        map
+                    } else {
+                        // Single-book rematch: merge so other entries keep their status
+                        _matchingResults.value + map
+                    }
+                }
+            }
+            launch {
+                processor.isProcessing.collect { _isMatchingInProgress.value = it }
+            }
+        }
+    }
+
+    /**
+     * Re-check an entry after download completes
+     * Updates matching status immediately for newly downloaded books
+     * @deprecated Use handleDownloadComplete instead for proper coordination
+     */
+    fun recheckEntryAfterDownload(entryId: String, opdsUpdated: Long? = null) {
+        matchingProcessor?.recheckEntry(entryId, opdsUpdated)
+    }
+
+    /**
+     * Cancel matching for an entry (called when user explicitly downloads)
+     * User's explicit download action takes precedence over background matching
+     */
+    fun cancelMatching(entryId: String) {
+        matchingProcessor?.cancelQueuedEntry(entryId)
+        Log.d("CatalogViewModel", "Cancelled matching for entry: $entryId (user initiated download)")
+    }
+
+    /**
+     * Handle download completion - just recheck to update UI
+     * Matching is already cancelled when download button is clicked
+     */
+    fun notifyDownloadComplete(entryId: String) {
+        recheckEntryAfterDownload(entryId, null)
+    }
+
     // Set of favorited entry IDs for the current catalog (for showing star icon)
     private val _favoritedEntryIds = MutableStateFlow<Set<String>>(emptySet())
     val favoritedEntryIds: StateFlow<Set<String>> = _favoritedEntryIds.asStateFlow()
@@ -210,6 +297,30 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         return bookDao.getBookByOpdsEntry(entryId, catalogId)
     }
 
+    /**
+     * Get debug info about the DB link state for an OPDS entry.
+     * Returns a short string like "DB: id=123 linked" or "DB: not linked".
+     */
+    suspend fun getDbLinkDebugInfo(entryId: String): String {
+        val catalogId = currentCatalogId ?: return "DB: no catalogId"
+        val book = bookDao.getBookByOpdsEntry(entryId, catalogId)
+        return if (book != null) {
+            "DB: id=${book.id} opdsEntry=${book.opdsEntryId?.take(12)}.. cat=${book.catalogId}"
+        } else {
+            "DB: not linked (cat=$catalogId)"
+        }
+    }
+
+    /**
+     * Get the primary author ID for a book matched to an OPDS entry
+     * Used for "Open in Library" navigation to author view
+     */
+    suspend fun getAuthorIdForBook(entryId: String): Long? {
+        val catalogId = currentCatalogId ?: return null
+        val bookWithDetails = database.bookDao().getBookWithDetailsByOpdsEntry(entryId, catalogId)
+        return bookWithDetails?.authors?.firstOrNull()?.id
+    }
+
     // Pagination state
     private var currentFeed: OpdsFeed? = null
     private var currentBaseUrl: String = ""
@@ -236,6 +347,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     companion object {
         private const val TAG = "CatalogViewModel"
         private const val FAVORITES_URL_PREFIX = "internal://favorites"
+        private const val LVA_URL_PREFIX = "internal://last-visited-authors"
+        private const val LVA_MAX_ENTRIES = 15
     }
 
     /**
@@ -360,6 +473,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * @param cachedNextPageUrl The next page URL at the time of navigation
      * @param cachedPageUrls List of loaded page URLs (for refresh)
      * @param cachedPageBoundaries Page boundary indices (for showing dividers)
+     * @param cachedLastPageEntriesCount Number of entries from the last loaded page (for proper refresh behavior)
      */
     private data class NavigationHistoryEntry(
         val url: String,
@@ -374,6 +488,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         val cachedNextPageUrl: String? = null,
         val cachedPageUrls: List<String>? = null,
         val cachedPageBoundaries: List<Int>? = null,
+        val cachedLastPageEntriesCount: Int? = null,
         // For favorites: store the catalog base URL for resolving relative links
         val favoritesCatalogBaseUrl: String? = null
     )
@@ -593,15 +708,147 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Detect the OPDS page type and extract context for smart matching
+     *
+     * Page types:
+     * - COLLECTION: Books from multiple authors (broad matching)
+     * - AUTHOR_PAGE: Author's books - author in feed root (use author context)
+     * - BOOK_DETAIL: Single book detail page (use full title matching)
+     */
+    private fun detectPageType(feed: OpdsFeed): OpdsBrowsingContext {
+        Log.d(TAG, "═══════════════════════════════════════════════════════════")
+        Log.d(TAG, "DETECTING PAGE TYPE")
+        Log.d(TAG, "Feed title: '${feed.title}'")
+        Log.d(TAG, "Feed author: '${feed.author?.name}' (uri: ${feed.author?.uri})")
+        Log.d(TAG, "Current URL: '$currentUrl'")
+        Log.d(TAG, "Total entries: ${feed.entries.size}")
+
+        val acquisitionEntries = feed.entries.filter { it.isAcquisition() }
+        Log.d(TAG, "Acquisition entries: ${acquisitionEntries.size}")
+
+        // Check if feed has author in root (indicates author page)
+        if (feed.author?.name?.isNotBlank() == true) {
+            Log.i(TAG, "→ Detected AUTHOR_PAGE (author in feed root)")
+            Log.i(TAG, "  Author from feed root: '${feed.author.name}'")
+            Log.i(TAG, "  Will filter ${acquisitionEntries.size} books by this author")
+            Log.d(TAG, "═══════════════════════════════════════════════════════════")
+            return OpdsBrowsingContext(
+                pageType = OpdsPageType.AUTHOR_PAGE,
+                authorName = feed.author.name,
+                currentEntry = null
+            )
+        }
+
+        // Check if URL indicates author page (e.g., /opds/author/123, /author/name)
+        val currentUrlValue = _currentUrl.value
+        if (currentUrlValue.contains("/author/", ignoreCase = true)) {
+            // Try to extract author name from feed title
+            // Common patterns: "Books by Author Name", "Author Name", "Книги автора Имя Автора"
+            val authorName = extractAuthorFromTitle(feed.title)
+            if (authorName != null) {
+                Log.i(TAG, "→ Detected AUTHOR_PAGE (from URL pattern and title)")
+                Log.i(TAG, "  URL contains '/author/': $currentUrlValue")
+                Log.i(TAG, "  Extracted author from title: '$authorName'")
+                Log.i(TAG, "  Will filter ${acquisitionEntries.size} books by this author")
+                Log.d(TAG, "═══════════════════════════════════════════════════════════")
+                return OpdsBrowsingContext(
+                    pageType = OpdsPageType.AUTHOR_PAGE,
+                    authorName = authorName,
+                    currentEntry = null
+                )
+            }
+        }
+
+        // Check if this is a book detail page (single acquisition entry)
+        // But exclude "About the author" pages and similar
+        if (acquisitionEntries.size == 1) {
+            val entry = acquisitionEntries.first()
+            val isAboutPage = entry.title.contains("about", ignoreCase = true) ||
+                             entry.title.contains("об авторе", ignoreCase = true) ||
+                             entry.title.contains("bio", ignoreCase = true)
+
+            if (!isAboutPage) {
+                Log.i(TAG, "→ Detected BOOK_DETAIL page")
+                Log.i(TAG, "  Entry title: '${entry.title}'")
+                Log.i(TAG, "  Entry author: '${entry.author?.name}'")
+                Log.d(TAG, "═══════════════════════════════════════════════════════════")
+                return OpdsBrowsingContext(
+                    pageType = OpdsPageType.BOOK_DETAIL,
+                    authorName = entry.author?.name,
+                    currentEntry = entry
+                )
+            } else {
+                Log.i(TAG, "  Single entry is 'About' page, skipping BOOK_DETAIL detection")
+            }
+        }
+
+        // Otherwise, it's a collection page
+        Log.i(TAG, "→ Detected COLLECTION page")
+        Log.i(TAG, "  Multiple entries (${acquisitionEntries.size}), no feed author")
+        Log.i(TAG, "  Will use broad matching strategy")
+        Log.d(TAG, "═══════════════════════════════════════════════════════════")
+        return OpdsBrowsingContext(
+            pageType = OpdsPageType.COLLECTION,
+            authorName = null,
+            currentEntry = null
+        )
+    }
+
+    /**
+     * Extract author name from feed title
+     * Handles patterns like:
+     * - "Книги автора Демченко Антон Витальевич"
+     * - "Books by John Smith"
+     * - "Author: Jane Doe"
+     */
+    private fun extractAuthorFromTitle(title: String): String? {
+        // Russian pattern: "Книги автора [Name]"
+        val russianPattern = Regex("""книги автора (.+)""", RegexOption.IGNORE_CASE)
+        russianPattern.find(title)?.let { matchResult ->
+            val authorName = matchResult.groupValues[1].trim()
+            Log.d(TAG, "  Extracted author (Russian pattern): '$authorName'")
+            return authorName
+        }
+
+        // English pattern: "Books by [Name]"
+        val englishPattern = Regex("""books by (.+)""", RegexOption.IGNORE_CASE)
+        englishPattern.find(title)?.let { matchResult ->
+            val authorName = matchResult.groupValues[1].trim()
+            Log.d(TAG, "  Extracted author (English pattern): '$authorName'")
+            return authorName
+        }
+
+        // Pattern: "Author: [Name]"
+        val authorPattern = Regex("""author:\s*(.+)""", RegexOption.IGNORE_CASE)
+        authorPattern.find(title)?.let { matchResult ->
+            val authorName = matchResult.groupValues[1].trim()
+            Log.d(TAG, "  Extracted author (Author: pattern): '$authorName'")
+            return authorName
+        }
+
+        Log.d(TAG, "  Could not extract author from title: '$title'")
+        return null
+    }
+
+    /**
      * Load an OPDS feed from the given URL
      */
     fun loadFeed(url: String, addToHistory: Boolean = true, forceRefresh: Boolean = false) {
         viewModelScope.launch {
             Log.d(TAG, "loadFeed: url=$url, addToHistory=$addToHistory, forceRefresh=$forceRefresh")
 
+            // Clear matching results when loading a new feed
+            matchingProcessor?.clearResults()
+
             // Handle favorites URLs specially
             if (url.startsWith(FAVORITES_URL_PREFIX)) {
                 loadFavoritesFeed(url, addToHistory)
+                return@launch
+            }
+
+            // Handle last visited authors URL
+            if (url == LVA_URL_PREFIX) {
+                loadLastVisitedAuthorsFeed(addToHistory)
                 return@launch
             }
 
@@ -650,26 +897,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                     }
                     updateNavigationState()
 
-                    // Inject Favorites entry at the top of the feed (only at root level)
+                    // Inject virtual entries at root level (Favorites, Last Visited Authors)
                     val feedWithFavorites = if (navigationHistory.size == 1) {
-                        val favoritesEntry = OpdsEntry(
-                            title = "⭐ Favorites",
-                            id = "favorites_root",
-                            links = listOf(
-                                OpdsLink(
-                                    href = FAVORITES_URL_PREFIX,
-                                    type = "application/atom+xml;profile=opds-catalog",
-                                    rel = "subsection"
-                                )
-                            ),
-                            updated = "",
-                            content = "",
-                            summary = "Your saved favorites",
-                            author = null,
-                            categories = emptyList()
-                        )
-                        val entriesWithFavorites = listOf(favoritesEntry) + feed.entries
-                        feed.copy(entries = entriesWithFavorites)
+                        feed.copy(entries = buildRootVirtualEntries() + feed.entries)
                     } else {
                         feed
                     }
@@ -707,6 +937,40 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                         catalogIcon = catalogIcon
                     )
                     _isNetworkActive.value = false
+
+                    // Detect page type and update browsing context
+                    browsingContext = detectPageType(feed)
+                    Log.d(TAG, "Detected page type: ${browsingContext.pageType}, author: ${browsingContext.authorName}")
+
+                    // Save last visited author when browsing an author page
+                    if (browsingContext.pageType == OpdsPageType.AUTHOR_PAGE && browsingContext.authorName != null) {
+                        saveLastVisitedAuthor(feed, url, browsingContext.authorName!!)
+                    }
+
+                    // Start background filename matching for acquisition entries
+                    currentCatalogId?.let { catalogId ->
+                        matchingProcessor?.stop()
+                        matchingProcessor = OpdsMatchingProcessor(
+                            database,
+                            appPreferences,
+                            catalogId,
+                            viewModelScope,
+                            browsingContext
+                        )
+                        attachProcessor(matchingProcessor!!)
+                        matchingProcessor?.start()
+
+                        // Queue all acquisition entries for processing
+                        feedWithFavorites.entries.filter { it.isAcquisition() }.forEach { entry ->
+                            val opdsUpdated = try {
+                                java.time.Instant.parse(entry.updated).toEpochMilli()
+                            } catch (e: Exception) {
+                                null
+                            }
+                            matchingProcessor?.queueEntry(entry, opdsUpdated)
+                        }
+                        Log.d(TAG, "Queued ${feedWithFavorites.entries.count { it.isAcquisition() }} entries for matching")
+                    }
                 },
                 onFailure = { exception ->
                     Log.e(TAG, "Failed to load feed", exception)
@@ -862,26 +1126,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                     }
                     updateNavigationState()
 
-                    // Inject Favorites entry at root level
+                    // Inject virtual entries at root level (Favorites, Last Visited Authors)
                     val feedWithFavorites = if (navigationHistory.size == 1) {
-                        val favoritesEntry = OpdsEntry(
-                            title = "⭐ Favorites",
-                            id = "favorites_root",
-                            links = listOf(
-                                OpdsLink(
-                                    href = FAVORITES_URL_PREFIX,
-                                    type = "application/atom+xml;profile=opds-catalog",
-                                    rel = "subsection"
-                                )
-                            ),
-                            updated = "",
-                            content = "",
-                            summary = "Your saved favorites",
-                            author = null,
-                            categories = emptyList()
-                        )
-                        val entriesWithFavorites = listOf(favoritesEntry) + normalizedFeed.entries
-                        normalizedFeed.copy(entries = entriesWithFavorites)
+                        normalizedFeed.copy(entries = buildRootVirtualEntries() + normalizedFeed.entries)
                     } else {
                         normalizedFeed
                     }
@@ -997,26 +1244,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 }
                 updateNavigationState()
 
-                // Inject Favorites entry at root level
+                // Inject virtual entries at root level (Favorites, Last Visited Authors)
                 val feedWithFavorites = if (navigationHistory.size == 1) {
-                    val favoritesEntry = OpdsEntry(
-                        title = "⭐ Favorites",
-                        id = "favorites_root",
-                        links = listOf(
-                            OpdsLink(
-                                href = FAVORITES_URL_PREFIX,
-                                type = "application/atom+xml;profile=opds-catalog",
-                                rel = "subsection"
-                            )
-                        ),
-                        updated = "",
-                        content = "",
-                        summary = "Your saved favorites",
-                        author = null,
-                        categories = emptyList()
-                    )
-                    val entriesWithFavorites = listOf(favoritesEntry) + feed.entries
-                    feed.copy(entries = entriesWithFavorites)
+                    feed.copy(entries = buildRootVirtualEntries() + feed.entries)
                 } else {
                     feed
                 }
@@ -1063,7 +1293,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 cachedEntries = accumulatedEntries.toList(),
                 cachedNextPageUrl = nextPageUrl,
                 cachedPageUrls = loadedPageUrls.toList(),
-                cachedPageBoundaries = pageBoundaryIndices.toList()
+                cachedPageBoundaries = pageBoundaryIndices.toList(),
+                cachedLastPageEntriesCount = lastPageEntriesCount
             )
             Log.d(TAG, "  Updated history entry with scrollToIndex: $entryIndex, cachedEntries: ${accumulatedEntries.size}, cachedPages: ${loadedPageUrls.size}")
         }
@@ -1071,8 +1302,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         val resolvedUrl = if (url.startsWith("http://") || url.startsWith("https://")) {
             // Already absolute URL
             url
-        } else if (url.startsWith(FAVORITES_URL_PREFIX)) {
-            // Internal favorites URL - use as is
+        } else if (url.startsWith(FAVORITES_URL_PREFIX) || url == LVA_URL_PREFIX) {
+            // Internal URL - use as is
             url
         } else {
             // Relative URL - resolve against appropriate base URL
@@ -1108,7 +1339,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 cachedEntries = accumulatedEntries.toList(),
                 cachedNextPageUrl = nextPageUrl,
                 cachedPageUrls = loadedPageUrls.toList(),
-                cachedPageBoundaries = pageBoundaryIndices.toList()
+                cachedPageBoundaries = pageBoundaryIndices.toList(),
+                cachedLastPageEntriesCount = lastPageEntriesCount
             )
             Log.d(TAG, "  Updated feed history entry with scrollToIndex: $index, cachedEntries: ${accumulatedEntries.size}, cachedPages: ${loadedPageUrls.size}")
         }
@@ -1187,7 +1419,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 // Check if we have cached entries (for scroll restoration in paginated lists)
                 if (entry.cachedEntries != null && entry.cachedEntries.isNotEmpty() && entry.scrollToIndex >= 0) {
                     Log.d(TAG, "  Restoring from cache: ${entry.cachedEntries.size} entries, scrollTo: ${entry.scrollToIndex}")
-                    restoreFeedFromCache(entry)
+                    viewModelScope.launch { restoreFeedFromCache(entry) }
                 } else {
                     // Set the scroll index for this page
                     _scrollToEntryIndex.value = entry.scrollToIndex
@@ -1203,7 +1435,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     /**
      * Restore feed state from cached entries (for scroll restoration in paginated lists)
      */
-    private fun restoreFeedFromCache(entry: NavigationHistoryEntry) {
+    private suspend fun restoreFeedFromCache(entry: NavigationHistoryEntry) {
         val cachedEntries = entry.cachedEntries ?: return
 
         // Restore accumulated entries and pagination state
@@ -1215,8 +1447,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         // Restore loaded page URLs for refresh functionality
         loadedPageUrls.clear()
         entry.cachedPageUrls?.let { loadedPageUrls.addAll(it) }
-        // Estimate last page entries count (we don't have exact value, but refresh will update it)
-        lastPageEntriesCount = 0
+        // Restore last page entries count for proper refresh behavior
+        lastPageEntriesCount = entry.cachedLastPageEntriesCount ?: 0
 
         // Restore page boundaries for dividers
         pageBoundaryIndices.clear()
@@ -1227,25 +1459,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         val isFavorites = entry.url.startsWith(FAVORITES_URL_PREFIX)
         _isBrowsingFavorites.value = isFavorites
 
-        // Inject Favorites entry at root level (navigationHistory.size == 1 means we're at root after removing current)
-        val entriesForDisplay = if (!isFavorites && navigationHistory.size == 1) {
-            val favoritesEntry = OpdsEntry(
-                title = "⭐ Favorites",
-                id = "favorites_root",
-                links = listOf(
-                    OpdsLink(
-                        href = FAVORITES_URL_PREFIX,
-                        type = "application/atom+xml;profile=opds-catalog",
-                        rel = "subsection"
-                    )
-                ),
-                updated = "",
-                content = "",
-                summary = "Your saved favorites",
-                author = null,
-                categories = emptyList()
-            )
-            listOf(favoritesEntry) + cachedEntries
+        // Inject virtual entries at root level (Favorites, Last Visited Authors)
+        val entriesForDisplay = if (!isFavorites && entry.url != LVA_URL_PREFIX && navigationHistory.size == 1) {
+            buildRootVirtualEntries() + cachedEntries
         } else {
             cachedEntries
         }
@@ -1280,6 +1496,24 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         // Refresh favorited entry IDs
         viewModelScope.launch {
             refreshFavoritedEntryIds()
+        }
+
+        // Re-run matching for acquisition entries in the restored feed.
+        // _matchingResults may contain stale results from the page the user navigated *to*,
+        // so we reset and re-check the DB for every acquisition entry in this list.
+        currentCatalogId?.let { catalogId ->
+            matchingProcessor?.stop()
+            browsingContext = detectPageType(cachedFeed)
+            matchingProcessor = OpdsMatchingProcessor(database, appPreferences, catalogId, viewModelScope, browsingContext)
+            attachProcessor(matchingProcessor!!)
+            matchingProcessor?.start()
+            cachedFeed.entries.filter { it.isAcquisition() }.forEach { opdsEntry ->
+                val opdsUpdated = try {
+                    java.time.Instant.parse(opdsEntry.updated).toEpochMilli()
+                } catch (e: Exception) { null }
+                matchingProcessor?.queueEntry(opdsEntry, opdsUpdated)
+            }
+            Log.d(TAG, "Re-queued ${cachedFeed.entries.count { it.isAcquisition() }} entries for matching (cache restore)")
         }
 
         _isCurrentFeedFromCache.value = true
@@ -1333,6 +1567,42 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     fun refresh() {
         Log.d(TAG, "refresh called - forcing network fetch for last page only")
 
+        // If viewing a book detail, force re-match that single book (even if already matched)
+        val currentBook = _currentBook.value
+        if (currentBook != null) {
+            Log.d(TAG, "Book detail rematch: clearing and re-matching '${currentBook.title}'")
+            viewModelScope.launch {
+                currentCatalogId?.let { catalogId ->
+                    try {
+                        // Clear existing match so queueEntry won't take the fast path
+                        val bookByEntry = database.bookDao().getBookByOpdsEntry(currentBook.id, catalogId)
+                        if (bookByEntry != null) {
+                            database.bookDao().updateOpdsEntryId(bookByEntry.id, "", 0)
+                            Log.d(TAG, "Cleared match for book ${bookByEntry.id} ('${bookByEntry.title}')")
+                        }
+
+                        browsingContext = detectPageType(OpdsFeed(entries = listOf(currentBook)))
+                        matchingProcessor?.stop()
+                        matchingProcessor = OpdsMatchingProcessor(database, appPreferences, catalogId, viewModelScope, browsingContext)
+                        attachProcessor(matchingProcessor!!, resetResults = false)
+                        matchingProcessor?.start()
+
+                        val opdsUpdated = try {
+                            java.time.Instant.parse(currentBook.updated).toEpochMilli()
+                        } catch (e: Exception) {
+                            null
+                        }
+                        matchingProcessor?.queueEntry(currentBook, opdsUpdated)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to re-match book", e)
+                    }
+                }
+            }
+            return
+        }
+
+        // Refresh the feed — already-matched books will use the fast path in queueEntry,
+        // so only unmatched books will be processed by filename matching.
         if (loadedPageUrls.isEmpty()) {
             Log.d(TAG, "No pages to refresh")
             return
@@ -1427,6 +1697,37 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                             hasNextPage = nextPageUrl != null,
                             catalogIcon = catalogIcon
                         )
+
+                        // Restart matching processor for re-matching (DEBUG MODE)
+                        currentCatalogId?.let { catalogId ->
+                            Log.w(TAG, "DEBUG: Restarting matching processor after refresh")
+
+                            // Detect page type
+                            browsingContext = detectPageType(updatedFeed)
+                            Log.d(TAG, "Detected page type: ${browsingContext.pageType}, author: ${browsingContext.authorName}")
+
+                            matchingProcessor?.stop()
+                            matchingProcessor = OpdsMatchingProcessor(
+                                database,
+                                appPreferences,
+                                catalogId,
+                                viewModelScope,
+                                browsingContext
+                            )
+                            attachProcessor(matchingProcessor!!)
+                            matchingProcessor?.start()
+
+                            // Queue all acquisition entries for processing
+                            updatedFeed.entries.filter { it.isAcquisition() }.forEach { entry ->
+                                val opdsUpdated = try {
+                                    java.time.Instant.parse(entry.updated).toEpochMilli()
+                                } catch (e: Exception) {
+                                    null
+                                }
+                                matchingProcessor?.queueEntry(entry, opdsUpdated)
+                            }
+                            Log.d(TAG, "Queued ${updatedFeed.entries.count { it.isAcquisition() }} entries for re-matching")
+                        }
 
                         // Refresh favorited entry IDs
                         refreshFavoritedEntryIds()
@@ -1542,6 +1843,17 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                         catalogIcon = catalogIcon
                     )
 
+                    // Queue new acquisition entries for matching
+                    newEntries.filter { it.isAcquisition() }.forEach { entry ->
+                        val opdsUpdated = try {
+                            java.time.Instant.parse(entry.updated).toEpochMilli()
+                        } catch (e: Exception) {
+                            null
+                        }
+                        matchingProcessor?.queueEntry(entry, opdsUpdated)
+                    }
+                    Log.d(TAG, "Queued ${newEntries.count { it.isAcquisition() }} new entries for matching (pagination)")
+
                     isLoadingMore = false
                     _isNetworkActive.value = false
                 },
@@ -1583,6 +1895,32 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      */
     fun resolveUrl(baseUrl: String, relativeUrl: String): String {
         return repository.resolveUrl(baseUrl, relativeUrl)
+    }
+
+    /**
+     * Check if an entry's navigation link is cached
+     * Returns true if the entry is a navigation entry and its target URL exists in cache
+     */
+    suspend fun isEntryCached(entry: OpdsEntry, baseUrl: String): Boolean {
+        // Only check cache for navigation entries (non-book entries)
+        if (!entry.isNavigation()) return false
+
+        // Get the navigation link
+        val navLink = entry.links.firstOrNull { link ->
+            link.rel == "subsection" ||
+            link.type?.contains("atom+xml") == true ||
+            link.type?.contains("opds-catalog") == true
+        } ?: return false
+
+        // Resolve the URL
+        val targetUrl = if (navLink.href.startsWith("http://") || navLink.href.startsWith("https://")) {
+            navLink.href
+        } else {
+            repository.resolveUrl(baseUrl, navLink.href)
+        }
+
+        // Check if this URL is in cache
+        return feedCacheDao.isCached(targetUrl)
     }
 
     /**
@@ -2274,6 +2612,173 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 _isNetworkActive.value = false
             }
         }
+    }
+
+    // ==================== Last Visited Authors ====================
+
+    /**
+     * Save the current author page as a last visited author entry
+     */
+    private fun saveLastVisitedAuthor(feed: OpdsFeed, url: String, authorName: String) {
+        val catalogId = currentCatalogId ?: return
+        viewModelScope.launch {
+            try {
+                // Build navigation history JSON from current history
+                val navHistory = navigationHistory.map { entry ->
+                    SerializableNavHistoryEntry(entry.url, entry.title, entry.updated)
+                }
+                val navHistoryJson = gson.toJson(navHistory)
+
+                // Check if this URL was already visited - update timestamp
+                val updated = lastVisitedAuthorDao.updateVisitedAt(
+                    catalogId, url, System.currentTimeMillis(), navHistoryJson
+                )
+
+                if (updated == 0) {
+                    // New entry
+                    lastVisitedAuthorDao.insert(
+                        LastVisitedAuthor(
+                            catalogId = catalogId,
+                            authorName = authorName,
+                            url = url,
+                            feedTitle = feed.title,
+                            navigationHistory = navHistoryJson,
+                            visitedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+
+                // Trim to max entries
+                lastVisitedAuthorDao.trimToLimit(catalogId, LVA_MAX_ENTRIES)
+                Log.d(TAG, "Saved last visited author: $authorName ($url)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving last visited author", e)
+            }
+        }
+    }
+
+    /**
+     * Load last visited authors as a virtual feed
+     */
+    private fun loadLastVisitedAuthorsFeed(addToHistory: Boolean = true) {
+        viewModelScope.launch {
+            try {
+                _isNetworkActive.value = true
+                _uiState.value = CatalogUiState.Loading
+
+                val catalogId = currentCatalogId ?: return@launch
+                val entries = lastVisitedAuthorDao.getForCatalog(catalogId)
+
+                val opdsEntries = entries.map { lva ->
+                    OpdsEntry(
+                        title = lva.authorName,
+                        id = "lva_${lva.id}",
+                        links = listOf(
+                            OpdsLink(
+                                href = lva.url,
+                                type = "application/atom+xml;profile=opds-catalog",
+                                rel = "subsection"
+                            )
+                        ),
+                        updated = "",
+                        content = "",
+                        summary = lva.feedTitle,
+                        author = null,
+                        categories = emptyList()
+                    )
+                }
+
+                val feed = OpdsFeed(
+                    id = "last_visited_authors",
+                    title = "Last Visited Authors",
+                    updated = "",
+                    entries = opdsEntries,
+                    links = emptyList()
+                )
+
+                currentFeed = feed
+                accumulatedEntries.clear()
+                accumulatedEntries.addAll(feed.entries)
+
+                _currentPageTitle.value = "Last Visited Authors"
+                _currentUrl.value = LVA_URL_PREFIX
+
+                if (addToHistory) {
+                    navigationHistory.add(NavigationHistoryEntry(
+                        url = LVA_URL_PREFIX,
+                        title = "Last Visited Authors",
+                        updated = null
+                    ))
+                }
+                updateNavigationState()
+
+                _uiState.value = CatalogUiState.Success(
+                    feed = feed,
+                    baseUrl = rootUrl,
+                    catalogIcon = catalogIcon,
+                    hasNextPage = false,
+                    isLoadingMore = false
+                )
+
+                _isNetworkActive.value = false
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading last visited authors", e)
+                _uiState.value = CatalogUiState.Error("Failed to load last visited authors: ${e.message}")
+                _isNetworkActive.value = false
+            }
+        }
+    }
+
+    /**
+     * Build the root-level virtual entries (Favorites, Last Visited Authors)
+     */
+    private suspend fun buildRootVirtualEntries(): List<OpdsEntry> {
+        val catalogId = currentCatalogId ?: return emptyList()
+        val entries = mutableListOf<OpdsEntry>()
+
+        // Favorites entry (only if non-empty)
+        val favCount = favoriteDao.getFavoritesCount(catalogId)
+        if (favCount > 0) {
+            entries.add(OpdsEntry(
+                title = "⭐ Favorites",
+                id = "favorites_root",
+                links = listOf(
+                    OpdsLink(
+                        href = FAVORITES_URL_PREFIX,
+                        type = "application/atom+xml;profile=opds-catalog",
+                        rel = "subsection"
+                    )
+                ),
+                updated = "",
+                content = "",
+                summary = "Your saved favorites",
+                author = null,
+                categories = emptyList()
+            ))
+        }
+
+        // Last visited authors entry (only if non-empty)
+        val lvaCount = lastVisitedAuthorDao.getCount(catalogId)
+        if (lvaCount > 0) {
+            entries.add(OpdsEntry(
+                title = "📖 Last Visited Authors",
+                id = "lva_root",
+                links = listOf(
+                    OpdsLink(
+                        href = LVA_URL_PREFIX,
+                        type = "application/atom+xml;profile=opds-catalog",
+                        rel = "subsection"
+                    )
+                ),
+                updated = "",
+                content = "",
+                summary = "Recently browsed author pages",
+                author = null,
+                categories = emptyList()
+            ))
+        }
+
+        return entries
     }
 
     // ==================== Search Functions ====================

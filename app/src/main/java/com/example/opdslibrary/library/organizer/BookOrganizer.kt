@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.example.opdslibrary.data.AppDatabase
+import com.example.opdslibrary.utils.FilenameUtils
 import com.example.opdslibrary.data.library.Author
 import com.example.opdslibrary.data.library.Book
 import com.example.opdslibrary.data.library.Series
@@ -115,7 +116,7 @@ class BookOrganizer(private val context: Context) {
 
         // Copy file to new location
         val sourceUri = Uri.parse(book.filePath)
-        val mimeType = getMimeType(book.filePath)
+        val mimeType = FilenameUtils.getMimeType(book.filePath)
 
         val newFile = targetDir.createFile(mimeType, finalFilename)
             ?: return OrganizeResult.Error(book.filePath, "Failed to create file: $finalFilename")
@@ -216,19 +217,6 @@ class BookOrganizer(private val context: Context) {
         return when {
             lower.endsWith(".fb2.zip") -> "fb2.zip"
             else -> path.substringAfterLast(".", "fb2")
-        }
-    }
-
-    private fun getMimeType(path: String): String {
-        val lower = path.lowercase()
-        return when {
-            lower.endsWith(".fb2.zip") -> "application/zip"
-            lower.endsWith(".fb2") -> "application/x-fictionbook+xml"
-            lower.endsWith(".epub") -> "application/epub+zip"
-            lower.endsWith(".pdf") -> "application/pdf"
-            lower.endsWith(".mobi") -> "application/x-mobipocket-ebook"
-            lower.endsWith(".azw3") -> "application/x-mobi8-ebook"
-            else -> "application/octet-stream"
         }
     }
 

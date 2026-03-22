@@ -76,7 +76,8 @@ class LibraryScanScheduler(private val context: Context) {
         opdsEntryId: String? = null,
         catalogId: Long? = null,
         opdsRelLinks: String? = null,
-        opdsNavigationHistory: String? = null
+        opdsNavigationHistory: String? = null,
+        opdsUpdated: Long? = null
     ) {
         val inputDataBuilder = Data.Builder()
             .putString(LibraryScanWorker.KEY_SINGLE_FILE_URI, fileUri.toString())
@@ -92,6 +93,9 @@ class LibraryScanScheduler(private val context: Context) {
         }
         if (opdsNavigationHistory != null) {
             inputDataBuilder.putString(LibraryScanWorker.KEY_OPDS_NAV_HISTORY, opdsNavigationHistory)
+        }
+        if (opdsUpdated != null) {
+            inputDataBuilder.putLong(LibraryScanWorker.KEY_OPDS_UPDATED, opdsUpdated)
         }
 
         val scanRequest = OneTimeWorkRequestBuilder<LibraryScanWorker>()

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -132,6 +133,54 @@ fun AppNavigation(
             )
         }
 
+        // Library screen with author filter
+        composable("library/author/{authorId}") { backStackEntry ->
+            val authorId = backStackEntry.arguments?.getString("authorId")?.toLongOrNull() ?: return@composable
+            val libraryViewModel: LibraryViewModel = viewModel()
+
+            LaunchedEffect(authorId) {
+                libraryViewModel.selectAuthor(authorId)
+            }
+
+            LibraryScreen(
+                viewModel = libraryViewModel,
+                onBack = {
+                    navController.popBackStack()
+                },
+                onSettings = {
+                    navController.navigate("app_settings")
+                },
+                onBookClick = { bookId ->
+                    navController.navigate("book_detail/$bookId")
+                },
+                isNavigatedFilter = true
+            )
+        }
+
+        // Library screen with series filter
+        composable("library/series/{seriesId}") { backStackEntry ->
+            val seriesId = backStackEntry.arguments?.getString("seriesId")?.toLongOrNull() ?: return@composable
+            val libraryViewModel: LibraryViewModel = viewModel()
+
+            LaunchedEffect(seriesId) {
+                libraryViewModel.selectSeries(seriesId)
+            }
+
+            LibraryScreen(
+                viewModel = libraryViewModel,
+                onBack = {
+                    navController.popBackStack()
+                },
+                onSettings = {
+                    navController.navigate("app_settings")
+                },
+                onBookClick = { bookId ->
+                    navController.navigate("book_detail/$bookId")
+                },
+                isNavigatedFilter = true
+            )
+        }
+
         // Book Detail screen
         composable("book_detail/{bookId}") { backStackEntry ->
             val bookId = backStackEntry.arguments?.getString("bookId")?.toLongOrNull() ?: return@composable
@@ -143,14 +192,18 @@ fun AppNavigation(
                     navController.popBackStack()
                 },
                 onNavigateToCatalog = { catalogId, url ->
-                    // Navigate to catalog with initial URL
                     val encodedUrl = URLEncoder.encode(url, StandardCharsets.UTF_8.toString())
                     navController.navigate("catalog_with_url/$catalogId/$encodedUrl")
                 },
                 onViewInCatalog = { catalogId, navHistoryJson ->
-                    // Navigate to catalog with restored navigation history
                     val encodedHistory = URLEncoder.encode(navHistoryJson, StandardCharsets.UTF_8.toString())
                     navController.navigate("catalog_with_history/$catalogId/$encodedHistory")
+                },
+                onShowAuthorBooks = { authorId ->
+                    navController.navigate("library/author/$authorId")
+                },
+                onShowSeriesBooks = { seriesId ->
+                    navController.navigate("library/series/$seriesId")
                 }
             )
         }
@@ -185,6 +238,9 @@ fun AppNavigation(
                     } else {
                         onExit()
                     }
+                },
+                onNavigateToLibrary = { authorId ->
+                    navController.navigate("library/author/$authorId")
                 }
             )
         }
@@ -207,6 +263,9 @@ fun AppNavigation(
                     } else {
                         onExit()
                     }
+                },
+                onNavigateToLibrary = { authorId ->
+                    navController.navigate("library/author/$authorId")
                 }
             )
         }
@@ -229,6 +288,9 @@ fun AppNavigation(
                     } else {
                         onExit()
                     }
+                },
+                onNavigateToLibrary = { authorId ->
+                    navController.navigate("library/author/$authorId")
                 }
             )
         }

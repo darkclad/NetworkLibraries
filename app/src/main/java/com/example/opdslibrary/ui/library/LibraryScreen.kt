@@ -2,33 +2,46 @@ package com.example.opdslibrary.ui.library
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.opdslibrary.data.library.*
@@ -38,6 +51,7 @@ import com.example.opdslibrary.utils.BookOpener
 import com.example.opdslibrary.viewmodel.LibraryViewModel
 import com.example.opdslibrary.viewmodel.LibraryViewModel.BrowseMode
 import com.example.opdslibrary.viewmodel.LibraryViewModel.SortOrder
+import com.example.opdslibrary.viewmodel.LibraryViewModel.SortType
 import java.io.File
 
 /**
@@ -49,7 +63,8 @@ fun LibraryScreen(
     viewModel: LibraryViewModel,
     onBack: () -> Unit,
     onSettings: () -> Unit,
-    onBookClick: (Long) -> Unit
+    onBookClick: (Long) -> Unit,
+    isNavigatedFilter: Boolean = false
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val books by viewModel.books.collectAsState()
@@ -61,9 +76,49 @@ fun LibraryScreen(
     val totalAuthors by viewModel.totalAuthors.collectAsState()
     val totalSeries by viewModel.totalSeries.collectAsState()
 
+    // Handle system back button for internal browse navigation
+    val needsInternalBack = !isNavigatedFilter && (
+        uiState.browseMode != BrowseMode.ALL_BOOKS ||
+        uiState.selectedAuthorId != null ||
+        uiState.selectedSeriesId != null ||
+        uiState.selectedGenreId != null
+    )
+    BackHandler(enabled = needsInternalBack) {
+        when (uiState.browseMode) {
+            BrowseMode.BY_AUTHOR, BrowseMode.BY_SERIES,
+            BrowseMode.BY_GENRE, BrowseMode.RECENT -> {
+                if (uiState.selectedAuthorId != null ||
+                    uiState.selectedSeriesId != null ||
+                    uiState.selectedGenreId != null) {
+                    viewModel.setBrowseMode(uiState.browseMode)
+                } else {
+                    viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
+                }
+            }
+            BrowseMode.SEARCH_RESULTS -> viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
+            else -> {}
+        }
+    }
+
     var searchQuery by remember { mutableStateOf("") }
+    var dropdownExpanded by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
     var showBrowseMenu by remember { mutableStateOf(false) }
+    val searchHistory by viewModel.searchHistory.collectAsState()
+    val suggestedHistory = remember(searchQuery, searchHistory) {
+        if (searchQuery.isEmpty()) searchHistory
+        else searchHistory.filter { it.contains(searchQuery, ignoreCase = true) }
+    }
+
+    // Live search: debounce 300ms so we don't hammer the search on every keystroke
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isBlank()) {
+            viewModel.searchBooks("")
+        } else {
+            delay(300)
+            viewModel.searchBooks(searchQuery)
+        }
+    }
 
     val context = LocalContext.current
 
@@ -127,19 +182,23 @@ fun LibraryScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        when (uiState.browseMode) {
-                            BrowseMode.ALL_BOOKS -> onBack()
-                            BrowseMode.BY_AUTHOR, BrowseMode.BY_SERIES,
-                            BrowseMode.BY_GENRE, BrowseMode.RECENT -> {
-                                if (uiState.selectedAuthorId != null ||
-                                    uiState.selectedSeriesId != null ||
-                                    uiState.selectedGenreId != null) {
-                                    viewModel.setBrowseMode(uiState.browseMode)
-                                } else {
-                                    viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
+                        if (isNavigatedFilter) {
+                            onBack()
+                        } else {
+                            when (uiState.browseMode) {
+                                BrowseMode.ALL_BOOKS -> onBack()
+                                BrowseMode.BY_AUTHOR, BrowseMode.BY_SERIES,
+                                BrowseMode.BY_GENRE, BrowseMode.RECENT -> {
+                                    if (uiState.selectedAuthorId != null ||
+                                        uiState.selectedSeriesId != null ||
+                                        uiState.selectedGenreId != null) {
+                                        viewModel.setBrowseMode(uiState.browseMode)
+                                    } else {
+                                        viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
+                                    }
                                 }
+                                BrowseMode.SEARCH_RESULTS -> viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
                             }
-                            BrowseMode.SEARCH_RESULTS -> viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
                         }
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -161,7 +220,7 @@ fun LibraryScreen(
                                     viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
                                     showBrowseMenu = false
                                 },
-                                leadingIcon = { Icon(Icons.Default.List, null) }
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("By Author ($totalAuthors)") },
@@ -177,7 +236,7 @@ fun LibraryScreen(
                                     viewModel.setBrowseMode(BrowseMode.BY_SERIES)
                                     showBrowseMenu = false
                                 },
-                                leadingIcon = { Icon(Icons.Default.List, null) }
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("By Genre") },
@@ -198,46 +257,73 @@ fun LibraryScreen(
                         }
                     }
 
-                    // Sort order
-                    if (uiState.browseMode == BrowseMode.ALL_BOOKS) {
-                        Box {
-                            IconButton(onClick = { showSortMenu = true }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "Sort")
+                    // Sort type dropdown (always visible)
+                    val availableSortTypes = viewModel.getAvailableSortTypes()
+                    Box {
+                        IconButton(onClick = { showSortMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Sort by")
+                        }
+                        DropdownMenu(
+                            expanded = showSortMenu,
+                            onDismissRequest = { showSortMenu = false }
+                        ) {
+                            if (SortType.TITLE in availableSortTypes) {
+                                DropdownMenuItem(
+                                    text = { Text("Sort by Title") },
+                                    onClick = {
+                                        viewModel.setSortType(SortType.TITLE)
+                                        showSortMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (viewModel.getCurrentSortType() == SortType.TITLE) {
+                                            Icon(Icons.Default.Check, null)
+                                        }
+                                    }
+                                )
                             }
-                            DropdownMenu(
-                                expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false }
-                            ) {
+                            if (SortType.AUTHOR in availableSortTypes) {
                                 DropdownMenuItem(
-                                    text = { Text("Title A-Z") },
+                                    text = { Text("Sort by Author") },
                                     onClick = {
-                                        viewModel.setSortOrder(SortOrder.TITLE_ASC)
+                                        viewModel.setSortType(SortType.AUTHOR)
                                         showSortMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (viewModel.getCurrentSortType() == SortType.AUTHOR) {
+                                            Icon(Icons.Default.Check, null)
+                                        }
                                     }
                                 )
+                            }
+                            if (SortType.DATE_ADDED in availableSortTypes) {
                                 DropdownMenuItem(
-                                    text = { Text("Title Z-A") },
+                                    text = { Text("Sort by Date Added") },
                                     onClick = {
-                                        viewModel.setSortOrder(SortOrder.TITLE_DESC)
+                                        viewModel.setSortType(SortType.DATE_ADDED)
                                         showSortMenu = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Author A-Z") },
-                                    onClick = {
-                                        viewModel.setSortOrder(SortOrder.AUTHOR_ASC)
-                                        showSortMenu = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Date Added (New)") },
-                                    onClick = {
-                                        viewModel.setSortOrder(SortOrder.DATE_ADDED_DESC)
-                                        showSortMenu = false
+                                    },
+                                    leadingIcon = {
+                                        if (viewModel.getCurrentSortType() == SortType.DATE_ADDED) {
+                                            Icon(Icons.Default.Check, null)
+                                        }
                                     }
                                 )
                             }
                         }
+                    }
+
+                    // Ascending/Descending toggle (always visible)
+                    IconButton(onClick = { viewModel.toggleSortDirection() }) {
+                        Icon(
+                            imageVector = if (viewModel.isSortAscending())
+                                Icons.Default.KeyboardArrowUp
+                            else
+                                Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (viewModel.isSortAscending())
+                                "Ascending"
+                            else
+                                "Descending"
+                        )
                     }
 
                     // Settings
@@ -257,39 +343,84 @@ fun LibraryScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Search bar
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
+            // Search combo box
+            @Suppress("DEPRECATION")
+            ExposedDropdownMenuBox(
+                expanded = dropdownExpanded && suggestedHistory.isNotEmpty(),
+                onExpandedChange = { dropdownExpanded = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Search books...") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = {
-                            searchQuery = ""
-                            viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
-                        }) {
-                            Icon(Icons.Default.Clear, "Clear")
-                        }
-                    }
-                },
-                singleLine = true
-            )
-
-            // Search button
-            if (searchQuery.isNotEmpty()) {
-                Button(
-                    onClick = { viewModel.searchBooks(searchQuery) },
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = {
+                        searchQuery = it
+                        dropdownExpanded = true
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
+                        .menuAnchor()
+                        .onFocusChanged { if (it.isFocused) dropdownExpanded = true },
+                    placeholder = { Text("Search books...") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, "Clear")
+                            }
+                        }
+                    },
+                    singleLine = true
+                )
+                ExposedDropdownMenu(
+                    expanded = dropdownExpanded && suggestedHistory.isNotEmpty(),
+                    onDismissRequest = { dropdownExpanded = false }
                 ) {
-                    Text("Search")
+                    suggestedHistory.forEach { item ->
+                        DropdownMenuItem(
+                            text = { Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            onClick = {
+                                searchQuery = item
+                                dropdownExpanded = false
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp))
+                            },
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = { viewModel.removeSearchHistoryItem(item) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Close, "Remove", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        )
+                    }
+                    if (suggestedHistory.size > 1) {
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "Clear history",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
+                            onClick = {
+                                viewModel.clearSearchHistory()
+                                dropdownExpanded = false
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Delete, null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
             // Content based on browse mode
@@ -353,21 +484,26 @@ fun LibraryScreen(
                 else -> {
                     // Show books grid with pagination for RECENT mode
                     val isRecentMode = uiState.browseMode == BrowseMode.RECENT
-                    BooksGrid(
-                        books = displayBooks,
-                        onBookClick = { onBookClick(it.book.id) },
-                        onOpenBook = { book ->
-                            // Open book in external reader
-                            BookOpener.openBook(
-                                context = context,
-                                filePath = book.book.filePath,
-                                preferredPackage = preferredReaderPackage
-                            )
-                        },
-                        hasMore = if (isRecentMode) uiState.hasMoreRecentBooks else false,
-                        isLoadingMore = if (isRecentMode) uiState.isLoadingMoreRecent else false,
-                        onLoadMore = if (isRecentMode) {{ viewModel.loadMoreRecentBooks() }} else null
-                    )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        BooksGrid(
+                            books = displayBooks,
+                            onBookClick = { onBookClick(it.book.id) },
+                            onOpenBook = { book ->
+                                // Open book in external reader
+                                BookOpener.openBook(
+                                    context = context,
+                                    filePath = book.book.filePath,
+                                    preferredPackage = preferredReaderPackage
+                                )
+                            },
+                            onDeleteBook = { book, deleteFile ->
+                                viewModel.deleteBook(book.book.id, deleteFile)
+                            },
+                            hasMore = if (isRecentMode) uiState.hasMoreRecentBooks else false,
+                            isLoadingMore = if (isRecentMode) uiState.isLoadingMoreRecent else false,
+                            onLoadMore = if (isRecentMode) {{ viewModel.loadMoreRecentBooks() }} else null
+                        )
+                    }
                 }
             }
         }
@@ -382,11 +518,13 @@ fun LibraryScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BooksGrid(
     books: List<BookWithDetails>,
     onBookClick: (BookWithDetails) -> Unit,
     onOpenBook: (BookWithDetails) -> Unit,
+    onDeleteBook: (BookWithDetails, Boolean) -> Unit,
     hasMore: Boolean = false,
     isLoadingMore: Boolean = false,
     onLoadMore: (() -> Unit)? = null
@@ -397,6 +535,21 @@ private fun BooksGrid(
     }
 
     val gridState = rememberLazyGridState()
+
+    // Build letter index map (letter/digit -> first book index with that character)
+    // Includes letters from any alphabet, digits, and groups symbols as '#'
+    val letterIndexMap = remember(uniqueBooks) {
+        uniqueBooks.mapIndexedNotNull { index, book ->
+            val firstChar = book.book.titleSort.firstOrNull()?.uppercaseChar()
+            when {
+                firstChar == null -> null
+                firstChar.isLetter() -> firstChar to index  // Any alphabet letter
+                firstChar.isDigit() -> firstChar to index   // Numbers 0-9
+                else -> '#' to index  // Group all symbols as '#'
+            }
+        }.groupBy({ it.first }, { it.second })
+            .mapValues { it.value.first() } // Take first occurrence of each character
+    }
 
     // Detect when user scrolls near the bottom
     LaunchedEffect(gridState) {
@@ -411,22 +564,58 @@ private fun BooksGrid(
         }
     }
 
-    LazyVerticalGrid(
-        state = gridState,
-        columns = GridCells.Adaptive(minSize = 150.dp),
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Adaptive(minSize = 150.dp),
+            contentPadding = PaddingValues(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
         items(
             items = uniqueBooks,
             key = { it.book.id }
         ) { bookWithDetails ->
+            var showDeleteDialog by remember { mutableStateOf(false) }
+
             BookCard(
                 bookWithDetails = bookWithDetails,
                 onClick = { onBookClick(bookWithDetails) },
-                onLongClick = { onOpenBook(bookWithDetails) }
+                onLongClick = { showDeleteDialog = true }
             )
+
+            if (showDeleteDialog) {
+                AlertDialog(
+                    onDismissRequest = { showDeleteDialog = false },
+                    title = { Text(bookWithDetails.book.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                    text = { Text("What would you like to do?") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                onDeleteBook(bookWithDetails, true)
+                                showDeleteDialog = false
+                            }
+                        ) {
+                            Text("Delete with File", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        Row {
+                            TextButton(onClick = { showDeleteDialog = false }) {
+                                Text("Cancel")
+                            }
+                            TextButton(
+                                onClick = {
+                                    onDeleteBook(bookWithDetails, false)
+                                    showDeleteDialog = false
+                                }
+                            ) {
+                                Text("Remove from Library")
+                            }
+                        }
+                    }
+                )
+            }
         }
 
         // Loading more indicator
@@ -455,6 +644,16 @@ private fun BooksGrid(
                     Text("Load More")
                 }
             }
+        }
+    }
+
+        // Letter index scroller on the right
+        if (letterIndexMap.isNotEmpty()) {
+            LetterIndexScroller(
+                letterIndexMap = letterIndexMap,
+                gridState = gridState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
         }
     }
 }
@@ -578,7 +777,7 @@ private fun SeriesList(
                 headlineContent = { Text(seriesWithCount.series.name) },
                 supportingContent = { Text("${seriesWithCount.bookCount} books") },
                 leadingContent = {
-                    Icon(Icons.Default.List, contentDescription = null)
+                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
                 },
                 modifier = Modifier.clickable { onSeriesClick(seriesWithCount) }
             )
@@ -608,14 +807,114 @@ private fun GenresList(
     }
 }
 
-private fun getMimeType(path: String): String {
-    val lower = path.lowercase()
-    return when {
-        lower.endsWith(".fb2.zip") -> "application/zip"
-        lower.endsWith(".fb2") -> "application/x-fictionbook+xml"
-        lower.endsWith(".epub") -> "application/epub+zip"
-        lower.endsWith(".pdf") -> "application/pdf"
-        lower.endsWith(".mobi") -> "application/x-mobipocket-ebook"
-        else -> "application/octet-stream"
+/**
+ * Letter index scroller - supports drag-to-select with zoom bubble.
+ * Finger drag tracks the letter under the finger (zoomed in bubble shown to the left),
+ * and jumps the grid to the corresponding section. Tap still works too.
+ */
+@Composable
+private fun LetterIndexScroller(
+    letterIndexMap: Map<Char, Int>,
+    gridState: LazyGridState,
+    modifier: Modifier = Modifier
+) {
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val letters = remember(letterIndexMap) { letterIndexMap.keys.sorted() }
+    if (letters.isEmpty()) return
+
+    var draggingLetter by remember { mutableStateOf<Char?>(null) }
+    var dragFraction by remember { mutableStateOf(0f) }
+    var columnHeightPx by remember { mutableStateOf(0) }
+
+    fun letterAt(fraction: Float): Char =
+        letters[(fraction * letters.size).toInt().coerceIn(0, letters.size - 1)]
+
+    fun jumpTo(letter: Char) {
+        letterIndexMap[letter]?.let { idx ->
+            coroutineScope.launch { gridState.scrollToItem(idx) }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(28.dp)
+            .padding(vertical = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth()
+                .onSizeChanged { columnHeightPx = it.height }
+                .pointerInput(letters) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (columnHeightPx > 0) {
+                            val f = (down.position.y / columnHeightPx).coerceIn(0f, 1f)
+                            dragFraction = f
+                            draggingLetter = letterAt(f)
+                            jumpTo(draggingLetter!!)
+                        }
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val ptr = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!ptr.pressed) break
+                            ptr.consume()
+                            if (columnHeightPx > 0) {
+                                val f = (ptr.position.y / columnHeightPx).coerceIn(0f, 1f)
+                                dragFraction = f
+                                val letter = letterAt(f)
+                                if (letter != draggingLetter) {
+                                    draggingLetter = letter
+                                    jumpTo(letter)
+                                }
+                            }
+                        }
+                        draggingLetter = null
+                    }
+                },
+            verticalArrangement = Arrangement.SpaceEvenly,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            letters.forEach { letter ->
+                val isActive = letter == draggingLetter
+                Text(
+                    text = letter.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isActive) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+        }
+
+        // Zoom bubble: floats to the left of the strip while dragging
+        val activeLetter = draggingLetter
+        if (activeLetter != null && columnHeightPx > 0) {
+            val bubbleDp = 48.dp
+            val bubblePx = with(density) { bubbleDp.toPx() }
+            val rawY = dragFraction * columnHeightPx - bubblePx / 2
+            val clampedY = rawY.coerceIn(0f, columnHeightPx - bubblePx)
+            val yDp = with(density) { clampedY.toDp() }
+            Box(
+                modifier = Modifier
+                    .size(bubbleDp)
+                    .offset(x = (-54).dp, y = yDp)
+                    .background(
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = activeLetter.toString(),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
     }
 }
+

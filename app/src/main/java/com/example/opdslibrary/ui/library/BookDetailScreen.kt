@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -47,7 +48,9 @@ fun BookDetailScreen(
     bookId: Long,
     onBack: () -> Unit,
     onNavigateToCatalog: (catalogId: Long, url: String) -> Unit = { _, _ -> },
-    onViewInCatalog: (catalogId: Long, navHistoryJson: String) -> Unit = { _, _ -> }
+    onViewInCatalog: (catalogId: Long, navHistoryJson: String) -> Unit = { _, _ -> },
+    onShowAuthorBooks: (authorId: Long) -> Unit = {},
+    onShowSeriesBooks: (seriesId: Long) -> Unit = {}
 ) {
     var bookWithDetails by remember { mutableStateOf<BookWithDetails?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -226,6 +229,42 @@ fun BookDetailScreen(
                     Icon(Icons.Default.PlayArrow, null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Open Book")
+                }
+
+                // Author and series navigation buttons
+                if (authors.isNotEmpty() || series != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (authors.size == 1) {
+                        OutlinedButton(
+                            onClick = { onShowAuthorBooks(authors[0].id) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Books by ${authors[0].getDisplayName()}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    } else if (authors.size > 1) {
+                        authors.forEach { author ->
+                            OutlinedButton(
+                                onClick = { onShowAuthorBooks(author.id) },
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                            ) {
+                                Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Books by ${author.getDisplayName()}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                    if (series != null) {
+                        OutlinedButton(
+                            onClick = { onShowSeriesBooks(series.id) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Series: ${series.name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -461,21 +500,32 @@ fun BookDetailScreen(
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text("Delete Book") },
-            text = { Text("Are you sure you want to remove this book from the library?") },
+            text = { Text("What would you like to do with this book?") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deleteBook(bookId, deleteFile = false)
+                        viewModel.deleteBook(bookId, deleteFile = true)
                         showDeleteDialog = false
                         onBack()
                     }
                 ) {
-                    Text("Remove from Library")
+                    Text("Delete with File", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("Cancel")
+                Row {
+                    TextButton(onClick = { showDeleteDialog = false }) {
+                        Text("Cancel")
+                    }
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteBook(bookId, deleteFile = false)
+                            showDeleteDialog = false
+                            onBack()
+                        }
+                    ) {
+                        Text("Remove from Library")
+                    }
                 }
             }
         )
@@ -577,17 +627,6 @@ private fun DetailRow(label: String, value: String) {
     }
 }
 
-private fun getMimeType(path: String): String {
-    val lower = path.lowercase()
-    return when {
-        lower.endsWith(".fb2.zip") -> "application/zip"
-        lower.endsWith(".fb2") -> "application/x-fictionbook+xml"
-        lower.endsWith(".epub") -> "application/epub+zip"
-        lower.endsWith(".pdf") -> "application/pdf"
-        lower.endsWith(".mobi") -> "application/x-mobipocket-ebook"
-        else -> "application/octet-stream"
-    }
-}
 
 private fun getFormatFromPath(path: String): String {
     val lower = path.lowercase()

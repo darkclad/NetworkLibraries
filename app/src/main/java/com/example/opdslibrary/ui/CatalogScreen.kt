@@ -9,7 +9,6 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.documentfile.provider.DocumentFile
@@ -20,7 +19,7 @@ import android.text.Html
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.core.content.FileProvider
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -40,6 +39,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -104,7 +104,8 @@ import com.example.opdslibrary.data.library.Book
 @Composable
 fun CatalogScreen(
     viewModel: CatalogViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToLibrary: (authorId: Long) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val catalogTitle by viewModel.catalogTitle.collectAsState()
@@ -119,6 +120,7 @@ fun CatalogScreen(
     val isBrowsingFavorites by viewModel.isBrowsingFavorites.collectAsState()
     val currentBook by viewModel.currentBook.collectAsState()
     val htmlPageUrl by viewModel.htmlPageUrl.collectAsState()
+    val isMatchingInProgress by viewModel.isMatchingInProgress.collectAsState()
     var showUrlDialog by remember { mutableStateOf(false) }
     var scrollToIndexTrigger by remember { mutableStateOf(0) }
     val context = LocalContext.current
@@ -299,6 +301,7 @@ fun CatalogScreen(
                 isFeedFromCache = isCurrentFeedFromCache,
                 isBrowsingFavorites = isBrowsingFavorites,
                 hasSearch = viewModel.hasSearchCapability(),
+                isMatchingInProgress = isMatchingInProgress,
                 activeDownloadsCount = activeDownloadsCount,
                 attentionCount = attentionCount,
                 onCatalogClick = { viewModel.navigateToRoot() },
@@ -439,7 +442,7 @@ fun CatalogScreen(
                                 showFavoritesOverlay = true
                             }
                         },
-                        onDownload = { url, fileType, entryId, title, relLinksJson, navHistoryJson ->
+                        onDownload = { url, fileType, entryId, title, relLinksJson, navHistoryJson, opdsUpdated ->
                             Log.d("CatalogScreen", "Download requested: $url ($fileType), entryId=$entryId, title=$title, hasRelLinks=${relLinksJson != null}, hasNavHistory=${navHistoryJson != null}")
 
                             // Extract fallback filename from URL
@@ -467,14 +470,19 @@ fun CatalogScreen(
                                 opdsRelLinks = relLinksJson,
                                 opdsNavigationHistory = navHistoryJson,
                                 onComplete = { uri, filename ->
-                                    // Show toast notification
+                                    // Download completed - add to library
                                     Toast.makeText(context, "Book $filename downloaded", Toast.LENGTH_SHORT).show()
 
-                                    // Schedule library scan for the downloaded file with OPDS entry info
                                     try {
                                         val scanScheduler = LibraryScanScheduler(context)
-                                        scanScheduler.scheduleProcessFile(uri, entryId, catalogId, relLinksJson, navHistoryJson)
-                                        Log.d("CatalogScreen", "Scheduled library scan for: $uri (opdsEntryId=$entryId, catalogId=$catalogId, hasRelLinks=${relLinksJson != null}, hasNavHistory=${navHistoryJson != null})")
+                                        scanScheduler.scheduleProcessFile(uri, entryId, catalogId, relLinksJson, navHistoryJson, opdsUpdated)
+                                        Log.d("CatalogScreen", "Scheduled library scan for: $uri (opdsEntryId=$entryId, catalogId=$catalogId)")
+
+                                        // Update UI after scan completes
+                                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                                            kotlinx.coroutines.delay(2000)
+                                            viewModel.recheckEntryAfterDownload(entryId, opdsUpdated)
+                                        }
                                     } catch (e: Exception) {
                                         Log.e("CatalogScreen", "Failed to schedule library scan", e)
                                     }
@@ -492,7 +500,8 @@ fun CatalogScreen(
                                 preferredPackage = preferredReaderPackage
                             )
                             Log.d("CatalogScreen", "Opening book: ${book.title} at ${book.filePath}")
-                        }
+                        },
+                        onNavigateToLibrary = onNavigateToLibrary
                     )
                         }
                     }
@@ -763,22 +772,6 @@ fun CatalogScreen(
     }
 }
 
-/**
- * Get MIME type from filename
- */
-private fun getMimeType(filename: String): String {
-    return when {
-        filename.endsWith(".epub", ignoreCase = true) -> "application/epub+zip"
-        filename.endsWith(".fb2", ignoreCase = true) -> "application/fb2"
-        filename.endsWith(".fb2.zip", ignoreCase = true) -> "application/zip"
-        filename.endsWith(".zip", ignoreCase = true) -> "application/zip"
-        filename.endsWith(".pdf", ignoreCase = true) -> "application/pdf"
-        filename.endsWith(".mobi", ignoreCase = true) -> "application/x-mobipocket-ebook"
-        filename.endsWith(".azw3", ignoreCase = true) -> "application/vnd.amazon.ebook"
-        filename.endsWith(".djvu", ignoreCase = true) -> "image/vnd.djvu"
-        else -> "*/*"
-    }
-}
 
 /**
  * Convert OPDS entry related links to JSON string for storage
@@ -811,6 +804,7 @@ fun CatalogTopAppBar(
     isFeedFromCache: Boolean,
     isBrowsingFavorites: Boolean,
     hasSearch: Boolean,
+    isMatchingInProgress: Boolean = false,
     activeDownloadsCount: Int = 0,
     attentionCount: Int = 0,
     onCatalogClick: () -> Unit,
@@ -924,12 +918,33 @@ fun CatalogTopAppBar(
                     }
                 }
 
-                // Refresh button - shows different color when feed is from cache
+                // Refresh button - rotates while matching, different color when feed is from cache
                 IconButton(onClick = onRefreshClick) {
+                    // Rotate while matching or network active
+                    val shouldRotate = isMatchingInProgress || isNetworkActive
+                    val rotation = if (shouldRotate) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "refresh_rotation")
+                        infiniteTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(1000, easing = LinearEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "rotation"
+                        ).value
+                    } else 0f
+
                     Icon(
                         imageVector = Icons.Filled.Refresh,
-                        contentDescription = if (isFeedFromCache) "Cached - tap to refresh from network" else "Refresh catalog",
-                        tint = if (isFeedFromCache) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface
+                        contentDescription = when {
+                            isMatchingInProgress -> "Matching in progress..."
+                            isNetworkActive -> "Loading from network..."
+                            isFeedFromCache -> "Cached - tap to refresh from network"
+                            else -> "Refresh catalog"
+                        },
+                        tint = if (isFeedFromCache) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.rotate(rotation)
                     )
                 }
                 // Only show Add button at root level (when can't navigate back)
@@ -1222,8 +1237,9 @@ fun FeedContent(
     scrollTrigger: Int = 0,
     onEntryClick: (OpdsEntry, Int) -> Unit,
     onEntryLongClick: (OpdsEntry) -> Unit,
-    onDownload: (url: String, fileType: String, entryId: String, title: String, relLinksJson: String?, navHistoryJson: String?) -> Unit,
-    onOpenBook: (com.example.opdslibrary.data.library.Book) -> Unit = {}
+    onDownload: (url: String, fileType: String, entryId: String, title: String, relLinksJson: String?, navHistoryJson: String?, opdsUpdated: Long?) -> Unit,
+    onOpenBook: (com.example.opdslibrary.data.library.Book) -> Unit = {},
+    onNavigateToLibrary: (authorId: Long) -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     val uiState by viewModel.uiState.collectAsState()
@@ -1292,14 +1308,6 @@ fun FeedContent(
 
                     if (currentRange != lastLoggedRange) {
                         lastLoggedRange = currentRange
-                        Log.d("ScrollItems", "Visible items: $currentRange (total: $totalItems)")
-                        visibleItems.forEach { itemInfo ->
-                            val index = itemInfo.index
-                            if (index < feed.entries.size) {
-                                val entry = feed.entries[index]
-                                Log.d("ScrollItems", "  [$index] ${entry.title}")
-                            }
-                        }
                     }
                 }
 
@@ -1352,7 +1360,8 @@ fun FeedContent(
                     onClick = { onEntryClick(entry, index) },
                     onLongClick = { onEntryLongClick(entry) },
                     onDownload = onDownload,
-                    onOpenBook = onOpenBook
+                    onOpenBook = onOpenBook,
+                    onOpenInLibrary = onNavigateToLibrary
                 )
             }
 
@@ -1394,8 +1403,9 @@ fun EntryCard(
     isFavorited: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {},
-    onDownload: (url: String, fileType: String, entryId: String, title: String, relLinksJson: String?, navHistoryJson: String?) -> Unit = { _, _, _, _, _, _ -> },
-    onOpenBook: (com.example.opdslibrary.data.library.Book) -> Unit = {}
+    onDownload: (url: String, fileType: String, entryId: String, title: String, relLinksJson: String?, navHistoryJson: String?, opdsUpdated: Long?) -> Unit = { _, _, _, _, _, _, _ -> },
+    onOpenBook: (com.example.opdslibrary.data.library.Book) -> Unit = {},
+    onOpenInLibrary: (authorId: Long) -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -1406,9 +1416,21 @@ fun EntryCard(
 
     val acquisitionLinks = entry.getAcquisitionLinks()
 
-    // Book library status
-    var bookStatus by remember { mutableStateOf<CatalogViewModel.BookLibraryStatus?>(null) }
+    // Observe background matching results
+    val matchingResults by viewModel.matchingResults.collectAsState()
+    val matchResult = matchingResults[entry.id]
+    val bookStatus = matchResult?.status
+
+    // Debug: DB link state for this entry (disabled)
+    val dbLinkDebugInfo: String? = null
+
     var localBook by remember { mutableStateOf<com.example.opdslibrary.data.library.Book?>(null) }
+
+    // Check if this entry's feed is cached
+    var isCached by remember { mutableStateOf(false) }
+    LaunchedEffect(entry.id, baseUrl) {
+        isCached = viewModel.isEntryCached(entry, baseUrl)
+    }
 
     // Track if book is being downloaded
     val downloads by AppDownloadManager.downloads.collectAsState()
@@ -1426,37 +1448,11 @@ fun EntryCard(
         }
     }
 
-    // Parse OPDS updated timestamp once
-    val opdsUpdated = remember(entry.updated) {
-        FormatSelector.parseOpdsTimestamp(entry.updated)
-    }
-
-    // Check book status when entry changes
-    LaunchedEffect(entry.id, opdsUpdated) {
-        if (acquisitionLinks.isNotEmpty()) {
-            bookStatus = viewModel.getBookLibraryStatus(entry.id, opdsUpdated)
-            if (bookStatus != CatalogViewModel.BookLibraryStatus.NOT_IN_LIBRARY) {
-                localBook = viewModel.getLocalBook(entry.id)
-            }
+    // Load local book when status indicates it's in library
+    LaunchedEffect(bookStatus) {
+        if (bookStatus != null && bookStatus != CatalogViewModel.BookLibraryStatus.NOT_IN_LIBRARY) {
+            localBook = viewModel.getLocalBook(entry.id)
         }
-    }
-
-    // Track previous downloading state to detect completion
-    var wasDownloading by remember { mutableStateOf(false) }
-
-    // Refresh book status when download completes
-    LaunchedEffect(isDownloading) {
-        if (wasDownloading && !isDownloading) {
-            // Download just finished - refresh book status
-            kotlinx.coroutines.delay(500) // Small delay to let database update
-            if (acquisitionLinks.isNotEmpty()) {
-                bookStatus = viewModel.getBookLibraryStatus(entry.id, opdsUpdated)
-                if (bookStatus != CatalogViewModel.BookLibraryStatus.NOT_IN_LIBRARY) {
-                    localBook = viewModel.getLocalBook(entry.id)
-                }
-            }
-        }
-        wasDownloading = isDownloading
     }
 
     Card(
@@ -1545,6 +1541,23 @@ fun EntryCard(
                         )
                     }
 
+                    // Debug: show DB link state + in-memory match status
+                    dbLinkDebugInfo?.let { info ->
+                        val statusLabel = when (bookStatus) {
+                            CatalogViewModel.BookLibraryStatus.CURRENT -> "mem:CURRENT"
+                            CatalogViewModel.BookLibraryStatus.OUTDATED -> "mem:OUTDATED"
+                            CatalogViewModel.BookLibraryStatus.NOT_IN_LIBRARY -> "mem:NOT_IN_LIB"
+                            null -> "mem:null"
+                        }
+                        val linked = info.startsWith("DB: id=")
+                        Text(
+                            text = "$info | $statusLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (linked) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error
+                        )
+                    }
+
                     entry.summary?.let { summary ->
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -1571,12 +1584,24 @@ fun EntryCard(
                             .align(Alignment.TopEnd)
                             .padding(8.dp)
                     ) {
-                        Text(
-                            text = it.toString(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
+                        ) {
+                            Text(
+                                text = it.toString(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (isCached) {
+                                Text(
+                                    text = "*",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.offset(y = (-4).dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1600,7 +1625,7 @@ fun EntryCard(
                             }
                         }
                         bookStatus == CatalogViewModel.BookLibraryStatus.CURRENT -> {
-                            // Show Open button only
+                            // Show Open button and Open in Library button
                             IconButton(
                                 onClick = {
                                     localBook?.let { book ->
@@ -1613,12 +1638,33 @@ fun EntryCard(
                                     painter = painterResource(id = R.drawable.ic_book),
                                     contentDescription = "Open",
                                     tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            // Open in Library button
+                            IconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val authorId = viewModel.getAuthorIdForBook(entry.id)
+                                        if (authorId != null) {
+                                            onOpenInLibrary(authorId)
+                                        } else {
+                                            Log.w("EntryCard", "No author found for book: ${entry.id}")
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Home,
+                                    contentDescription = "Open in Library",
+                                    tint = MaterialTheme.colorScheme.secondary,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
                         bookStatus == CatalogViewModel.BookLibraryStatus.OUTDATED -> {
-                            // Show Open + Re-download buttons
+                            // Show Open + Re-download + Open in Library buttons
                             IconButton(
                                 onClick = {
                                     localBook?.let { book ->
@@ -1636,6 +1682,9 @@ fun EntryCard(
                             }
                             IconButton(
                                 onClick = {
+                                    // Cancel matching - user explicitly wants to download
+                                    viewModel.cancelMatching(entry.id)
+
                                     // Download using format priority
                                     coroutineScope.launch {
                                         val prefs = AppPreferences(context)
@@ -1650,7 +1699,7 @@ fun EntryCard(
                                             val relLinksJson = serializeRelLinks(entry)
                                             val navHistoryJson = viewModel.getCurrentNavigationHistoryJson()
                                             Log.d("BookEntryCard", "Download initiated: entryId=${entry.id}, hasNavHistory=${navHistoryJson != null}, navHistoryLen=${navHistoryJson?.length ?: 0}")
-                                            onDownload(resolvedUrl, FormatSelector.getFormatName(bestLink), entry.id, entry.title, relLinksJson, navHistoryJson)
+                                            onDownload(resolvedUrl, FormatSelector.getFormatName(bestLink), entry.id, entry.title, relLinksJson, navHistoryJson, try { java.time.Instant.parse(entry.updated).toEpochMilli() } catch (e: Exception) { null })
                                         }
                                     }
                                 },
@@ -1663,11 +1712,35 @@ fun EntryCard(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
+                            // Open in Library button
+                            IconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val authorId = viewModel.getAuthorIdForBook(entry.id)
+                                        if (authorId != null) {
+                                            onOpenInLibrary(authorId)
+                                        } else {
+                                            Log.w("EntryCard", "No author found for book: ${entry.id}")
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Home,
+                                    contentDescription = "Open in Library",
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                         else -> {
                             // NOT_IN_LIBRARY or null - Show Download button
                             IconButton(
                                 onClick = {
+                                    // Cancel matching - user explicitly wants to download
+                                    viewModel.cancelMatching(entry.id)
+
                                     // Download using format priority
                                     coroutineScope.launch {
                                         val prefs = AppPreferences(context)
@@ -1682,7 +1755,7 @@ fun EntryCard(
                                             val relLinksJson = serializeRelLinks(entry)
                                             val navHistoryJson = viewModel.getCurrentNavigationHistoryJson()
                                             Log.d("BookEntryCard", "Download initiated: entryId=${entry.id}, hasNavHistory=${navHistoryJson != null}, navHistoryLen=${navHistoryJson?.length ?: 0}")
-                                            onDownload(resolvedUrl, FormatSelector.getFormatName(bestLink), entry.id, entry.title, relLinksJson, navHistoryJson)
+                                            onDownload(resolvedUrl, FormatSelector.getFormatName(bestLink), entry.id, entry.title, relLinksJson, navHistoryJson, try { java.time.Instant.parse(entry.updated).toEpochMilli() } catch (e: Exception) { null })
                                         }
                                     }
                                 },
@@ -2285,8 +2358,11 @@ fun BookDetailsPage(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // Book library status
-    var bookStatus by remember { mutableStateOf<CatalogViewModel.BookLibraryStatus?>(null) }
+    // Observe background matching results
+    val matchingResults by viewModel.matchingResults.collectAsState()
+    val matchResult = matchingResults[book.id]
+    val bookStatus = matchResult?.status
+
     var localBook by remember { mutableStateOf<com.example.opdslibrary.data.library.Book?>(null) }
 
     // Track if book is being downloaded
@@ -2305,37 +2381,11 @@ fun BookDetailsPage(
         }
     }
 
-    // Parse OPDS updated timestamp once
-    val opdsUpdated = remember(book.updated) {
-        FormatSelector.parseOpdsTimestamp(book.updated)
-    }
-
-    // Check book status when entry changes
-    LaunchedEffect(book.id, opdsUpdated) {
-        if (acquisitionLinks.isNotEmpty()) {
-            bookStatus = viewModel.getBookLibraryStatus(book.id, opdsUpdated)
-            if (bookStatus != CatalogViewModel.BookLibraryStatus.NOT_IN_LIBRARY) {
-                localBook = viewModel.getLocalBook(book.id)
-            }
+    // Load local book when status indicates it's in library
+    LaunchedEffect(bookStatus) {
+        if (bookStatus != null && bookStatus != CatalogViewModel.BookLibraryStatus.NOT_IN_LIBRARY) {
+            localBook = viewModel.getLocalBook(book.id)
         }
-    }
-
-    // Track previous downloading state to detect completion
-    var wasDownloading by remember { mutableStateOf(false) }
-
-    // Refresh book status when download completes
-    LaunchedEffect(isDownloading) {
-        if (wasDownloading && !isDownloading) {
-            // Download just finished - refresh book status
-            kotlinx.coroutines.delay(500) // Small delay to let database update
-            if (acquisitionLinks.isNotEmpty()) {
-                bookStatus = viewModel.getBookLibraryStatus(book.id, opdsUpdated)
-                if (bookStatus != CatalogViewModel.BookLibraryStatus.NOT_IN_LIBRARY) {
-                    localBook = viewModel.getLocalBook(book.id)
-                }
-            }
-        }
-        wasDownloading = isDownloading
     }
 
     // Scrollable content (no header needed - main top bar shows the title)
@@ -2500,7 +2550,14 @@ fun BookDetailsPage(
                                                     onDownloadComplete(uri, filename)
                                                     try {
                                                         val scanScheduler = LibraryScanScheduler(context)
-                                                        scanScheduler.scheduleProcessFile(uri, book.id, catalogId, relLinksJson, navHistoryJson)
+                                                        val entryUpdated = try { java.time.Instant.parse(book.updated).toEpochMilli() } catch (e: Exception) { null }
+                                                        scanScheduler.scheduleProcessFile(uri, book.id, catalogId, relLinksJson, navHistoryJson, entryUpdated)
+
+                                                        // Re-check entry after download
+                                                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                                                            kotlinx.coroutines.delay(2000)
+                                                            viewModel.recheckEntryAfterDownload(book.id, entryUpdated)
+                                                        }
                                                     } catch (e: Exception) {
                                                         Log.e("BookDetailsPage", "Failed to schedule library scan", e)
                                                     }
@@ -2564,7 +2621,14 @@ fun BookDetailsPage(
                                                     onDownloadComplete(uri, filename)
                                                     try {
                                                         val scanScheduler = LibraryScanScheduler(context)
-                                                        scanScheduler.scheduleProcessFile(uri, book.id, catalogId, relLinksJson, navHistoryJson)
+                                                        val entryUpdated = try { java.time.Instant.parse(book.updated).toEpochMilli() } catch (e: Exception) { null }
+                                                        scanScheduler.scheduleProcessFile(uri, book.id, catalogId, relLinksJson, navHistoryJson, entryUpdated)
+
+                                                        // Re-check entry after download
+                                                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                                                            kotlinx.coroutines.delay(2000)
+                                                            viewModel.recheckEntryAfterDownload(book.id, entryUpdated)
+                                                        }
                                                     } catch (e: Exception) {
                                                         Log.e("BookDetailsPage", "Failed to schedule library scan", e)
                                                     }
@@ -2920,6 +2984,7 @@ fun getDefaultDownloadFolder(context: Context): String {
 /**
  * Download book using BookDownloader with proper SAF support
  */
+@OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
 fun downloadBookWithDownloader(
     context: Context,
     bookDownloader: BookDownloader,
@@ -3040,6 +3105,7 @@ fun extractFilenameFromContentDisposition(contentDisposition: String?): String? 
  * First makes a HEAD request to get Content-Disposition header,
  * then downloads with the correct filename to the configured folder.
  */
+@OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
 fun startDownloadWithFilename(
     context: Context,
     url: String,

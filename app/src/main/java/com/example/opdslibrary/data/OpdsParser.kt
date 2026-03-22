@@ -165,7 +165,7 @@ class OpdsParser {
                 else -> skip(parser)
             }
         }
-        return OpdsAuthor(name, uri, email)
+        return OpdsAuthor(name, uri)
     }
 
     @Throws(XmlPullParserException::class, IOException::class)
@@ -197,7 +197,6 @@ class OpdsParser {
             throw XmlPullParserException("Expected START_TAG but got: ${parser.eventType}")
         }
 
-        val expectedTag = tag
         var text = ""
 
         if (parser.next() == XmlPullParser.TEXT) {
@@ -206,7 +205,7 @@ class OpdsParser {
         }
 
         // Make sure we're at the end tag, skip any nested elements if needed
-        while (parser.eventType != XmlPullParser.END_TAG || parser.name != expectedTag) {
+        while (parser.eventType != XmlPullParser.END_TAG || parser.name != tag) {
             if (parser.eventType == XmlPullParser.START_TAG) {
                 skip(parser)
             } else {

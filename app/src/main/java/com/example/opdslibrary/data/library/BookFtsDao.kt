@@ -43,6 +43,17 @@ interface BookFtsDao {
     suspend fun search(query: String, limit: Int): List<Long>
 
     /**
+     * Search and return full index rows so callers can inspect which fields matched
+     */
+    @Query("""
+        SELECT bsi.* FROM book_search_index bsi
+        JOIN book_search_fts ON book_search_fts.rowid = bsi.rowid
+        WHERE book_search_fts MATCH :query
+        LIMIT :limit
+    """)
+    suspend fun searchWithDetails(query: String, limit: Int): List<BookSearchIndex>
+
+    /**
      * Simple search by title (fallback when FTS fails)
      */
     @Query("""

@@ -3,18 +3,38 @@ package com.example.opdslibrary.viewmodel
 import android.app.Application
 import android.net.Uri
 import android.util.Log
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.asFlow
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import com.example.opdslibrary.data.AppDatabase
 import com.example.opdslibrary.data.AppPreferences
+import com.example.opdslibrary.data.library.Book
 import com.example.opdslibrary.data.library.ScanFolder
 import com.example.opdslibrary.image.ImageCacheManager
 import com.example.opdslibrary.library.scanner.LibraryScanScheduler
 import com.example.opdslibrary.library.scanner.LibraryScanWorker
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+
+/**
+ * A group of books with identical file size (potential duplicates)
+ * The first book is the suggested keeper (earliest added); the rest are candidates for deletion.
+ */
+data class DuplicateGroup(
+    val fileSize: Long,
+    val books: List<Book>
+)
+
+/**
+ * State machine for duplicate detection flow
+ */
+sealed class DupeState {
+    object Idle : DupeState()
+    object Scanning : DupeState()
+    data class Results(val groups: List<DuplicateGroup>) : DupeState()
+}
 
 /**
  * Data class representing scan progress
@@ -98,6 +118,14 @@ class AppSettingsViewModel(application: Application) : AndroidViewModel(applicat
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = "System Default (Ask Every Time)"
+        )
+
+    // Filename matching setting
+    val enableFilenameMatching: StateFlow<Boolean> = appPreferences.enableFilenameMatching
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = AppPreferences.DEFAULT_ENABLE_FILENAME_MATCHING
         )
 
     // Image cache size
@@ -236,6 +264,16 @@ class AppSettingsViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             appPreferences.clearPreferredReader()
             Log.d(TAG, "Cleared preferred reader")
+        }
+    }
+
+    /**
+     * Set filename matching enabled state
+     */
+    fun setEnableFilenameMatching(enabled: Boolean) {
+        viewModelScope.launch {
+            appPreferences.setEnableFilenameMatching(enabled)
+            Log.d(TAG, "Set filename matching to: $enabled")
         }
     }
 
@@ -413,6 +451,63 @@ class AppSettingsViewModel(application: Application) : AndroidViewModel(applicat
                 _isLoading.value = false
             }
         }
+    }
+
+    // ==================== Duplicate Detection ====================
+
+    private val _dupeState = MutableStateFlow<DupeState>(DupeState.Idle)
+    val dupeState: StateFlow<DupeState> = _dupeState.asStateFlow()
+
+    fun findDuplicates() {
+        viewModelScope.launch {
+            _dupeState.value = DupeState.Scanning
+            try {
+                val allDupes = bookDao.getDuplicateBooks()
+                val groups = allDupes
+                    .groupBy { it.fileSize }
+                    .map { (size, books) -> DuplicateGroup(size, books) }
+                _dupeState.value = DupeState.Results(groups)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to find duplicates", e)
+                _errorMessage.value = "Failed to find duplicates: ${e.message}"
+                _dupeState.value = DupeState.Idle
+            }
+        }
+    }
+
+    fun deleteDuplicates(books: List<Book>) {
+        viewModelScope.launch {
+            try {
+                _isLoading.value = true
+                for (book in books) {
+                    val path = book.filePath
+                    if (path.startsWith("content://")) {
+                        try {
+                            DocumentFile.fromSingleUri(getApplication(), Uri.parse(path))?.delete()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not delete SAF file: $path", e)
+                        }
+                    } else {
+                        try {
+                            java.io.File(path).delete()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not delete file: $path", e)
+                        }
+                    }
+                    bookDao.deleteById(book.id)
+                }
+                _dupeState.value = DupeState.Idle
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete duplicates", e)
+                _errorMessage.value = "Failed to delete: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun dismissDuplicates() {
+        _dupeState.value = DupeState.Idle
     }
 
     /**

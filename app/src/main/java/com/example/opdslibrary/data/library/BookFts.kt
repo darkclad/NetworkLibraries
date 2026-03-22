@@ -3,19 +3,6 @@ package com.example.opdslibrary.data.library
 import androidx.room.*
 
 /**
- * FTS4 virtual table for full-text search on books
- */
-@Entity(tableName = "book_fts")
-@Fts4(contentEntity = Book::class)
-data class BookFts(
-    @ColumnInfo(name = "title")
-    val title: String,
-
-    @ColumnInfo(name = "description")
-    val description: String?
-)
-
-/**
  * Separate table for additional searchable fields not in Book entity
  */
 @Entity(

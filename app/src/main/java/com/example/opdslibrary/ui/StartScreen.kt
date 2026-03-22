@@ -115,14 +115,6 @@ fun StartScreen(
                             if (visibleItems.isNotEmpty()) {
                                 val firstVisible = visibleItems.first().index
                                 val lastVisible = visibleItems.last().index
-                                Log.d("ScrollItems", "StartScreen visible items: $firstVisible-$lastVisible (total: ${layoutInfo.totalItemsCount})")
-                                visibleItems.forEach { itemInfo ->
-                                    val index = itemInfo.index
-                                    if (index < catalogs.size) {
-                                        val catalog = catalogs[index]
-                                        Log.d("ScrollItems", "  [$index] ${catalog.getDisplayName()}")
-                                    }
-                                }
                             }
                         }
                 }

@@ -20,7 +20,8 @@ import com.google.gson.reflect.TypeToken
         Index("needsReindex"),
         Index("titleSort"),
         Index("opdsEntryId"),
-        Index("catalogId")
+        Index("catalogId"),
+        Index(value = ["opdsEntryId", "catalogId"], unique = true)
     ],
     foreignKeys = [
         ForeignKey(

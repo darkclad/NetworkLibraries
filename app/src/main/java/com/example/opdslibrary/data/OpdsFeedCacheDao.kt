@@ -38,8 +38,8 @@ interface OpdsFeedCacheDao {
     suspend fun deleteOlderThan(timestamp: Long)
 
     /**
-     * Get total number of cached feeds
+     * Check if a feed URL exists in cache
      */
-    @Query("SELECT COUNT(*) FROM opds_feed_cache")
-    suspend fun getCacheCount(): Int
+    @Query("SELECT EXISTS(SELECT 1 FROM opds_feed_cache WHERE url = :url)")
+    suspend fun isCached(url: String): Boolean
 }

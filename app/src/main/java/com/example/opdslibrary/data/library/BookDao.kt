@@ -11,21 +11,6 @@ interface BookDao {
 
     // === Query Methods ===
 
-    @Query("SELECT * FROM books ORDER BY titleSort ASC")
-    fun getAllBooks(): Flow<List<Book>>
-
-    @Query("SELECT * FROM books ORDER BY addedAt DESC")
-    fun getAllBooksRecentFirst(): Flow<List<Book>>
-
-    @Transaction
-    @Query("""
-        SELECT b.* FROM books b
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
-        ORDER BY b.titleSort ASC
-    """)
-    fun getAllBooksWithDetails(): Flow<List<BookWithDetails>>
-
     @Transaction
     @Query("""
         SELECT b.* FROM books b
@@ -43,15 +28,6 @@ interface BookDao {
         ORDER BY b.titleSort DESC
     """)
     fun getAllBooksWithDetailsByTitleDesc(): Flow<List<BookWithDetails>>
-
-    @Transaction
-    @Query("""
-        SELECT b.* FROM books b
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
-        ORDER BY b.addedAt DESC
-    """)
-    fun getAllBooksWithDetailsRecentFirst(): Flow<List<BookWithDetails>>
 
     @Transaction
     @Query("""
@@ -109,18 +85,6 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE needsReindex = 1")
     suspend fun getBooksNeedingReindex(): List<Book>
 
-    @Query("SELECT * FROM books WHERE seriesId = :seriesId ORDER BY seriesNumber ASC")
-    fun getBooksBySeries(seriesId: Long): Flow<List<Book>>
-
-    @Transaction
-    @Query("""
-        SELECT b.* FROM books b
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE b.seriesId = :seriesId AND (b.scanFolderId IS NULL OR sf.enabled = 1)
-        ORDER BY b.seriesNumber ASC
-    """)
-    fun getBooksWithDetailsBySeries(seriesId: Long): Flow<List<BookWithDetails>>
-
     @Transaction
     @Query("""
         SELECT b.* FROM books b
@@ -155,37 +119,9 @@ interface BookDao {
         SELECT b.* FROM books b
         LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
         WHERE b.scanFolderId IS NULL OR sf.enabled = 1
-        ORDER BY b.addedAt DESC LIMIT :limit
-    """)
-    fun getRecentBooks(limit: Int): Flow<List<BookWithDetails>>
-
-    @Transaction
-    @Query("""
-        SELECT b.* FROM books b
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
-        ORDER BY b.addedAt DESC LIMIT :limit OFFSET :offset
-    """)
-    fun getRecentBooksPaged(limit: Int, offset: Int): Flow<List<BookWithDetails>>
-
-    @Transaction
-    @Query("""
-        SELECT b.* FROM books b
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
         ORDER BY b.addedAt DESC LIMIT :limit OFFSET :offset
     """)
     suspend fun getRecentBooksPagedOnce(limit: Int, offset: Int): List<BookWithDetails>
-
-    @Query("SELECT * FROM books WHERE downloadedViaApp = 1 ORDER BY addedAt DESC")
-    fun getDownloadedBooks(): Flow<List<Book>>
-
-    @Query("""
-        SELECT COUNT(*) FROM books b
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
-    """)
-    suspend fun getBookCountOnce(): Int
 
     @Query("""
         SELECT COUNT(*) FROM books b
@@ -193,9 +129,6 @@ interface BookDao {
         WHERE b.scanFolderId IS NULL OR sf.enabled = 1
     """)
     fun getBookCount(): Flow<Int>
-
-    @Query("SELECT COUNT(*) FROM books WHERE downloadedViaApp = 1")
-    suspend fun getDownloadedBookCount(): Int
 
     // === Search by ID list (for Lucene results) ===
 
@@ -207,9 +140,6 @@ interface BookDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(book: Book): Long
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(books: List<Book>): List<Long>
 
     @Update
     suspend fun update(book: Book)
@@ -233,14 +163,8 @@ interface BookDao {
 
     // === Reindex Flags ===
 
-    @Query("UPDATE books SET needsReindex = 1 WHERE id = :bookId")
-    suspend fun markForReindex(bookId: Long)
-
     @Query("UPDATE books SET needsReindex = 0, indexedAt = :indexedAt WHERE id = :bookId")
     suspend fun markAsIndexed(bookId: Long, indexedAt: Long)
-
-    @Query("UPDATE books SET needsReindex = 1")
-    suspend fun markAllForReindex()
 
     // === Cover Updates ===
 
@@ -252,8 +176,16 @@ interface BookDao {
     @Query("SELECT EXISTS(SELECT 1 FROM books WHERE filePath = :path)")
     suspend fun existsByPath(path: String): Boolean
 
-    @Query("SELECT EXISTS(SELECT 1 FROM books WHERE fileHash = :hash)")
-    suspend fun existsByHash(hash: String): Boolean
+    // === Duplicate Detection ===
+
+    @Query("""
+        SELECT * FROM books
+        WHERE fileSize > 0 AND fileSize IN (
+            SELECT fileSize FROM books GROUP BY fileSize HAVING COUNT(*) > 1
+        )
+        ORDER BY fileSize ASC, addedAt ASC
+    """)
+    suspend fun getDuplicateBooks(): List<Book>
 
     // === OPDS Entry ID Queries ===
 
@@ -286,10 +218,79 @@ interface BookDao {
     @Query("""
         SELECT CASE
             WHEN NOT EXISTS(SELECT 1 FROM books WHERE opdsEntryId = :entryId AND catalogId = :catalogId) THEN NULL
-            WHEN (SELECT opdsUpdated FROM books WHERE opdsEntryId = :entryId AND catalogId = :catalogId) IS NULL THEN 1
-            WHEN (SELECT opdsUpdated FROM books WHERE opdsEntryId = :entryId AND catalogId = :catalogId) < :opdsUpdated THEN 1
+            WHEN (SELECT opdsUpdated FROM books WHERE opdsEntryId = :entryId AND catalogId = :catalogId LIMIT 1) IS NULL THEN 1
+            WHEN (SELECT opdsUpdated FROM books WHERE opdsEntryId = :entryId AND catalogId = :catalogId LIMIT 1) < :opdsUpdated THEN 1
             ELSE 0
         END
     """)
     suspend fun isBookOutdated(entryId: String, catalogId: Long, opdsUpdated: Long): Int?
+
+    /**
+     * Find books by normalized filename (case-insensitive)
+     * Uses LIKE to match the filename portion of filePath
+     * Used for filename-based OPDS matching
+     *
+     * @param filename The normalized filename to search for (should be lowercase)
+     * @return List of matching books (may include partial matches, filter in code for exact match)
+     */
+    @Query("SELECT * FROM books WHERE LOWER(filePath) LIKE '%' || LOWER(:filename)")
+    suspend fun getBooksByFilenamePattern(filename: String): List<Book>
+
+    /**
+     * Find books by title pattern (case-insensitive)
+     * Used for title-based OPDS matching
+     *
+     * @param title The title pattern to search for
+     * @return List of matching books
+     */
+    @Query("SELECT * FROM books WHERE LOWER(title) LIKE '%' || LOWER(:title) || '%'")
+    suspend fun getBooksByTitlePattern(title: String): List<Book>
+
+    /**
+     * Find books by author name pattern (case-insensitive)
+     * Searches through the authors table and returns books by matching authors
+     * Matches against firstName, middleName, lastName, nickname, or sortName
+     *
+     * @param authorName The author name pattern to search for
+     * @return List of matching books
+     */
+    @Query("""
+        SELECT DISTINCT b.* FROM books b
+        INNER JOIN book_authors ba ON b.id = ba.bookId
+        INNER JOIN authors a ON ba.authorId = a.id
+        WHERE LOWER(a.firstName) LIKE '%' || LOWER(:authorName) || '%'
+           OR LOWER(a.middleName) LIKE '%' || LOWER(:authorName) || '%'
+           OR LOWER(a.lastName) LIKE '%' || LOWER(:authorName) || '%'
+           OR LOWER(a.nickname) LIKE '%' || LOWER(:authorName) || '%'
+           OR LOWER(a.sortName) LIKE '%' || LOWER(:authorName) || '%'
+    """)
+    suspend fun getBooksByAuthorPattern(authorName: String): List<Book>
+
+    /**
+     * Update navigation history for a book
+     * Used to enable "View in Catalog" feature for filename-matched books
+     *
+     * @param bookId The book ID to update
+     * @param navigationHistory JSON-serialized navigation history
+     */
+    @Query("UPDATE books SET opdsNavigationHistory = :navigationHistory WHERE id = :bookId")
+    suspend fun updateOpdsNavigationHistory(bookId: Long, navigationHistory: String?)
+
+    /**
+     * Clear OPDS info from all books for a specific catalog (DEBUG MODE)
+     * Used to test re-matching after refresh
+     *
+     * @param catalogId The catalog ID
+     * @return Number of books updated
+     */
+    @Query("""
+        UPDATE books
+        SET opdsEntryId = NULL,
+            catalogId = NULL,
+            opdsUpdated = NULL,
+            opdsRelLinks = NULL,
+            opdsNavigationHistory = NULL
+        WHERE catalogId = :catalogId
+    """)
+    suspend fun clearOpdsInfoForCatalog(catalogId: Long): Int
 }

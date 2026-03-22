@@ -11,9 +11,6 @@ interface SeriesDao {
 
     // === Query Methods ===
 
-    @Query("SELECT * FROM series ORDER BY name ASC")
-    fun getAllSeries(): Flow<List<Series>>
-
     @Query("""
         SELECT s.*, COUNT(b.id) as bookCount
         FROM series s
@@ -31,17 +28,6 @@ interface SeriesDao {
 
     @Query("SELECT * FROM series WHERE name = :name LIMIT 1")
     suspend fun findByName(name: String): Series?
-
-    @Query("SELECT * FROM series WHERE name LIKE '%' || :query || '%' ORDER BY name ASC")
-    fun searchSeries(query: String): Flow<List<Series>>
-
-    @Query("""
-        SELECT COUNT(DISTINCT s.id) FROM series s
-        INNER JOIN books b ON s.id = b.seriesId
-        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
-        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
-    """)
-    suspend fun getSeriesCountOnce(): Int
 
     @Query("""
         SELECT COUNT(DISTINCT s.id) FROM series s

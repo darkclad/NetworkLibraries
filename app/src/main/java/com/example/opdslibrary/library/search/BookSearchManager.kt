@@ -57,11 +57,11 @@ class BookSearchManager(private val context: Context) {
 
             bookFtsDao.upsertBookFts(
                 bookId = book.id,
-                title = book.title,
-                authors = authorNames,
-                series = series?.name ?: "",
-                description = book.description ?: "",
-                genres = genreNames
+                title = book.title.lowercase(),
+                authors = authorNames.lowercase(),
+                series = series?.name?.lowercase() ?: "",
+                description = book.description?.lowercase() ?: "",
+                genres = genreNames.lowercase()
             )
 
             Log.d(TAG, "Indexed book: ${book.title} (id=${book.id})")
@@ -85,11 +85,11 @@ class BookSearchManager(private val context: Context) {
 
                 bookFtsDao.upsertBookFts(
                     bookId = data.book.id,
-                    title = data.book.title,
-                    authors = authorNames,
-                    series = data.series?.name ?: "",
-                    description = data.book.description ?: "",
-                    genres = genreNames
+                    title = data.book.title.lowercase(),
+                    authors = authorNames.lowercase(),
+                    series = data.series?.name?.lowercase() ?: "",
+                    description = data.book.description?.lowercase() ?: "",
+                    genres = genreNames.lowercase()
                 )
             }
             Log.d(TAG, "Batch indexed ${booksWithMetadata.size} books")
@@ -122,12 +122,38 @@ class BookSearchManager(private val context: Context) {
         }
 
         try {
-            // Add wildcards for partial matching
-            val ftsQuery = query.trim().split("\\s+".toRegex())
-                .joinToString(" ") { "$it*" }
+            // Global FTS query — field-specific syntax is unreliable with non-ASCII in FTS4.
+            // Include both lowercase and original-case per word to handle legacy index entries
+            // that were not stored in lowercase (SQLite simple tokenizer skips non-ASCII casing).
+            val terms = query.trim().split("\\s+".toRegex())
+            val ftsQuery = terms.joinToString(" ") { word ->
+                val lc = word.lowercase()
+                if (lc == word) "$lc*" else "$lc* OR $word*"
+            }
 
-            val results = bookFtsDao.search(ftsQuery, limit)
-            Log.d(TAG, "Search '$query' returned ${results.size} results")
+            Log.d(TAG, "Search '$query' → FTS query: '$ftsQuery'")
+            val allDetails = bookFtsDao.searchWithDetails(ftsQuery, limit * 3)
+
+            // Post-filter: only keep results that match in title or authors
+            val lcTerms = terms.map { it.lowercase() }
+            val details = allDetails.filter { entry ->
+                lcTerms.any { term ->
+                    entry.title.contains(term, ignoreCase = true) ||
+                    entry.authors.contains(term, ignoreCase = true)
+                }
+            }.take(limit)
+
+            val results = details.map { it.bookId }
+            Log.d(TAG, "Search '$query' returned ${results.size} results (${allDetails.size} before title/author filter)")
+            details.forEach { entry ->
+                val matched = buildList {
+                    if (lcTerms.any { entry.title.contains(it, ignoreCase = true) })
+                        add("title: \"${entry.title.take(60)}\"")
+                    if (entry.authors.isNotEmpty() && lcTerms.any { entry.authors.contains(it, ignoreCase = true) })
+                        add("authors: \"${entry.authors.take(60)}\"")
+                }
+                Log.d(TAG, "  id=${entry.bookId} → ${matched.joinToString(" | ")}")
+            }
             results
         } catch (e: Exception) {
             Log.e(TAG, "Search failed for query: $query", e)

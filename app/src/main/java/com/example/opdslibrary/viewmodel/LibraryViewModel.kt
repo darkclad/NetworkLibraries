@@ -53,10 +53,56 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         DATE_ADDED_ASC
     }
 
+    // Sort type (for UI)
+    enum class SortType {
+        TITLE,
+        AUTHOR,
+        DATE_ADDED;
+
+        fun toSortOrder(ascending: Boolean): SortOrder {
+            return when (this) {
+                TITLE -> if (ascending) SortOrder.TITLE_ASC else SortOrder.TITLE_DESC
+                AUTHOR -> if (ascending) SortOrder.AUTHOR_ASC else SortOrder.AUTHOR_DESC
+                DATE_ADDED -> if (ascending) SortOrder.DATE_ADDED_ASC else SortOrder.DATE_ADDED_DESC
+            }
+        }
+
+        companion object {
+            fun fromSortOrder(sortOrder: SortOrder): SortType {
+                return when (sortOrder) {
+                    SortOrder.TITLE_ASC, SortOrder.TITLE_DESC -> TITLE
+                    SortOrder.AUTHOR_ASC, SortOrder.AUTHOR_DESC -> AUTHOR
+                    SortOrder.DATE_ADDED_DESC, SortOrder.DATE_ADDED_ASC -> DATE_ADDED
+                }
+            }
+
+            fun isAscending(sortOrder: SortOrder): Boolean {
+                return when (sortOrder) {
+                    SortOrder.TITLE_ASC, SortOrder.AUTHOR_ASC, SortOrder.DATE_ADDED_ASC -> true
+                    SortOrder.TITLE_DESC, SortOrder.AUTHOR_DESC, SortOrder.DATE_ADDED_DESC -> false
+                }
+            }
+
+            /**
+             * Get available sort types for a given browse mode
+             */
+            fun getAvailableForMode(mode: BrowseMode): List<SortType> {
+                return when (mode) {
+                    BrowseMode.ALL_BOOKS -> listOf(TITLE, AUTHOR, DATE_ADDED)
+                    BrowseMode.BY_AUTHOR -> listOf(TITLE, DATE_ADDED) // No author sort when already filtered by author
+                    BrowseMode.BY_SERIES -> listOf(TITLE, AUTHOR, DATE_ADDED)
+                    BrowseMode.BY_GENRE -> listOf(TITLE, AUTHOR, DATE_ADDED)
+                    BrowseMode.RECENT -> listOf(TITLE, AUTHOR, DATE_ADDED)
+                    BrowseMode.SEARCH_RESULTS -> listOf(TITLE, AUTHOR, DATE_ADDED)
+                }
+            }
+        }
+    }
+
     // UI State
     data class LibraryUiState(
-        val browseMode: BrowseMode = BrowseMode.ALL_BOOKS,
-        val sortOrder: SortOrder = SortOrder.TITLE_ASC,
+        val browseMode: BrowseMode = BrowseMode.RECENT,
+        val sortOrder: SortOrder = SortOrder.DATE_ADDED_DESC,
         val searchQuery: String = "",
         val selectedAuthorId: Long? = null,
         val selectedSeriesId: Long? = null,
@@ -92,22 +138,30 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 }
                 BrowseMode.BY_AUTHOR -> {
                     state.selectedAuthorId?.let { authorId ->
-                        bookDao.getBooksForAuthor(authorId)
+                        bookDao.getBooksForAuthor(authorId).map { books ->
+                            applySortOrder(books, state.sortOrder)
+                        }
                     } ?: flowOf(emptyList())
                 }
                 BrowseMode.BY_SERIES -> {
                     state.selectedSeriesId?.let { seriesId ->
-                        bookDao.getBooksForSeries(seriesId)
+                        bookDao.getBooksForSeries(seriesId).map { books ->
+                            applySortOrder(books, state.sortOrder)
+                        }
                     } ?: flowOf(emptyList())
                 }
                 BrowseMode.BY_GENRE -> {
                     state.selectedGenreId?.let { genreId ->
-                        bookDao.getBooksForGenre(genreId)
+                        bookDao.getBooksForGenre(genreId).map { books ->
+                            applySortOrder(books, state.sortOrder)
+                        }
                     } ?: flowOf(emptyList())
                 }
                 BrowseMode.RECENT -> {
-                    // Return the paginated recent books flow
-                    _recentBooks
+                    // Return the paginated recent books flow with applied sort
+                    _recentBooks.map { books ->
+                        applySortOrder(books, state.sortOrder)
+                    }
                 }
                 BrowseMode.SEARCH_RESULTS -> {
                     // Search results are handled separately via searchBooks()
@@ -149,6 +203,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             initialValue = emptyList()
         )
 
+    // Search history
+    val searchHistory: StateFlow<List<String>> = appPreferences.librarySearchHistory
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
     // Library statistics
     val totalBooks: StateFlow<Int> = bookDao.getBookCount()
         .stateIn(
@@ -182,19 +244,34 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             val browseMode = try {
                 BrowseMode.valueOf(savedBrowseMode)
             } catch (e: Exception) {
-                BrowseMode.ALL_BOOKS
+                BrowseMode.RECENT
             }
 
             val sortOrder = try {
                 SortOrder.valueOf(savedSortOrder)
             } catch (e: Exception) {
-                SortOrder.TITLE_ASC
+                SortOrder.DATE_ADDED_DESC
             }
 
-            _uiState.update { it.copy(browseMode = browseMode, sortOrder = sortOrder) }
+            // Only apply saved browse mode if no external filter was applied before init
+            // completed (e.g. navigating to library/author/{id} calls selectAuthor before
+            // this coroutine resumes from IO, so we must not overwrite that selection).
+            _uiState.update { current ->
+                val effectiveMode = when {
+                    current.selectedAuthorId != null -> BrowseMode.BY_AUTHOR
+                    current.selectedSeriesId != null -> BrowseMode.BY_SERIES
+                    current.selectedGenreId  != null -> BrowseMode.BY_GENRE
+                    else -> browseMode
+                }
+                current.copy(browseMode = effectiveMode, sortOrder = sortOrder)
+            }
 
-            // Load recent books if that's the saved mode
-            if (browseMode == BrowseMode.RECENT) {
+            // Load recent books only when no filter took priority
+            val finalState = _uiState.value
+            if (finalState.browseMode == BrowseMode.RECENT &&
+                finalState.selectedAuthorId == null &&
+                finalState.selectedSeriesId == null &&
+                finalState.selectedGenreId  == null) {
                 loadRecentBooks()
             }
         }
@@ -261,6 +338,65 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         // Save sort order preference
         viewModelScope.launch {
             appPreferences.setLibrarySortOrder(order.name)
+        }
+    }
+
+    /**
+     * Set sort type (Title, Author, or Date) while preserving current direction
+     */
+    fun setSortType(type: SortType) {
+        val currentAscending = SortType.isAscending(_uiState.value.sortOrder)
+        val newOrder = type.toSortOrder(currentAscending)
+        setSortOrder(newOrder)
+    }
+
+    /**
+     * Toggle sort direction (ascending/descending) while preserving current type
+     */
+    fun toggleSortDirection() {
+        val currentType = SortType.fromSortOrder(_uiState.value.sortOrder)
+        val currentAscending = SortType.isAscending(_uiState.value.sortOrder)
+        val newOrder = currentType.toSortOrder(!currentAscending)
+        setSortOrder(newOrder)
+    }
+
+    /**
+     * Get current sort type
+     */
+    fun getCurrentSortType(): SortType {
+        return SortType.fromSortOrder(_uiState.value.sortOrder)
+    }
+
+    /**
+     * Check if current sort is ascending
+     */
+    fun isSortAscending(): Boolean {
+        return SortType.isAscending(_uiState.value.sortOrder)
+    }
+
+    /**
+     * Get available sort types for current browse mode
+     */
+    fun getAvailableSortTypes(): List<SortType> {
+        return SortType.getAvailableForMode(_uiState.value.browseMode)
+    }
+
+    /**
+     * Apply sort order to a list of books
+     * Used for filtered views (BY_AUTHOR, BY_SERIES, BY_GENRE, RECENT)
+     */
+    private fun applySortOrder(books: List<BookWithDetails>, sortOrder: SortOrder): List<BookWithDetails> {
+        return when (sortOrder) {
+            SortOrder.TITLE_ASC -> books.sortedBy { it.book.titleSort.lowercase() }
+            SortOrder.TITLE_DESC -> books.sortedByDescending { it.book.titleSort.lowercase() }
+            SortOrder.AUTHOR_ASC -> books.sortedBy {
+                it.authors.firstOrNull()?.sortName?.lowercase() ?: ""
+            }
+            SortOrder.AUTHOR_DESC -> books.sortedByDescending {
+                it.authors.firstOrNull()?.sortName?.lowercase() ?: ""
+            }
+            SortOrder.DATE_ADDED_ASC -> books.sortedBy { it.book.addedAt }
+            SortOrder.DATE_ADDED_DESC -> books.sortedByDescending { it.book.addedAt }
         }
     }
 
@@ -384,6 +520,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 } else {
                     _searchResults.value = emptyList()
                 }
+                appPreferences.addLibrarySearchHistory(query)
             } catch (e: Exception) {
                 Log.e(TAG, "Search failed", e)
                 _uiState.update { it.copy(errorMessage = "Search failed: ${e.message}") }
@@ -524,6 +661,20 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
+    }
+
+    /**
+     * Remove a single item from search history
+     */
+    fun removeSearchHistoryItem(query: String) {
+        viewModelScope.launch { appPreferences.removeLibrarySearchHistoryItem(query) }
+    }
+
+    /**
+     * Clear search history
+     */
+    fun clearSearchHistory() {
+        viewModelScope.launch { appPreferences.clearLibrarySearchHistory() }
     }
 
     /**

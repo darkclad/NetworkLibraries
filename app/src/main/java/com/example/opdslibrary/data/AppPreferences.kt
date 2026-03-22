@@ -2,6 +2,7 @@ package com.example.opdslibrary.data
 
 import android.content.Context
 import android.os.Environment
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -29,6 +30,10 @@ class AppPreferences(private val context: Context) {
         private val KEY_LIBRARY_SORT_ORDER = stringPreferencesKey("library_sort_order")
         private val KEY_PREFERRED_READER_PACKAGE = stringPreferencesKey("preferred_reader_package")
         private val KEY_PREFERRED_READER_NAME = stringPreferencesKey("preferred_reader_name")
+        private val KEY_ENABLE_FILENAME_MATCHING = booleanPreferencesKey("enable_filename_matching")
+        private val KEY_LIBRARY_SEARCH_HISTORY = stringPreferencesKey("library_search_history")
+
+        const val SEARCH_HISTORY_MAX = 15
 
         // Defaults
         const val DEFAULT_PARALLEL_WORKERS = 4
@@ -37,6 +42,9 @@ class AppPreferences(private val context: Context) {
         val DEFAULT_FORMAT_PRIORITY = listOf(
             "fb2.zip", "fb2", "rtf", "pdf", "epub", "mobi", "azw3", "html", "txt"
         )
+
+        // Default for filename-based OPDS matching
+        const val DEFAULT_ENABLE_FILENAME_MATCHING = true
 
         /**
          * Get the maximum recommended parallel workers based on CPU cores
@@ -280,5 +288,72 @@ class AppPreferences(private val context: Context) {
             preferences.remove(KEY_PREFERRED_READER_PACKAGE)
             preferences.remove(KEY_PREFERRED_READER_NAME)
         }
+    }
+
+    // ==================== Library Search History ====================
+
+    val librarySearchHistory: Flow<List<String>> = context.dataStore.data
+        .map { preferences ->
+            preferences[KEY_LIBRARY_SEARCH_HISTORY]
+                ?.split("\n")
+                ?.filter { it.isNotBlank() }
+                ?: emptyList()
+        }
+
+    suspend fun addLibrarySearchHistory(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+        context.dataStore.edit { preferences ->
+            val current = preferences[KEY_LIBRARY_SEARCH_HISTORY]
+                ?.split("\n")
+                ?.filter { it.isNotBlank() }
+                ?: emptyList()
+            val updated = (listOf(trimmed) + current.filter { it != trimmed })
+                .take(SEARCH_HISTORY_MAX)
+            preferences[KEY_LIBRARY_SEARCH_HISTORY] = updated.joinToString("\n")
+        }
+    }
+
+    suspend fun removeLibrarySearchHistoryItem(query: String) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[KEY_LIBRARY_SEARCH_HISTORY]
+                ?.split("\n")?.filter { it.isNotBlank() } ?: return@edit
+            val updated = current.filter { it != query }
+            if (updated.isEmpty()) preferences.remove(KEY_LIBRARY_SEARCH_HISTORY)
+            else preferences[KEY_LIBRARY_SEARCH_HISTORY] = updated.joinToString("\n")
+        }
+    }
+
+    suspend fun clearLibrarySearchHistory() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(KEY_LIBRARY_SEARCH_HISTORY)
+        }
+    }
+
+    // ==================== Filename Matching Settings ====================
+
+    /**
+     * Flow of filename matching enabled state
+     */
+    val enableFilenameMatching: Flow<Boolean> = context.dataStore.data
+        .map { preferences ->
+            preferences[KEY_ENABLE_FILENAME_MATCHING] ?: DEFAULT_ENABLE_FILENAME_MATCHING
+        }
+
+    /**
+     * Set whether filename-based OPDS matching is enabled
+     */
+    suspend fun setEnableFilenameMatching(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[KEY_ENABLE_FILENAME_MATCHING] = enabled
+        }
+    }
+
+    /**
+     * Get filename matching enabled state synchronously (for use in background processors)
+     */
+    suspend fun getEnableFilenameMatchingOnce(): Boolean {
+        val preferences = context.dataStore.data.first()
+        return preferences[KEY_ENABLE_FILENAME_MATCHING] ?: DEFAULT_ENABLE_FILENAME_MATCHING
     }
 }

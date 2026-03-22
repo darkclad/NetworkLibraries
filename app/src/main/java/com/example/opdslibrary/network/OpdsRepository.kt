@@ -183,7 +183,7 @@ class OpdsRepository(private val context: Context) {
             val resolved = base.resolve(relativeUrl)
 
             if (resolved != null) {
-                Log.d(TAG, "Resolved: $baseUrl + $relativeUrl = ${resolved.toString()}")
+//                Log.d(TAG, "Resolved: $baseUrl + $relativeUrl = ${resolved.toString()}")
                 resolved.toString()
             } else {
                 Log.w(TAG, "Could not resolve URL: $relativeUrl against $baseUrl")

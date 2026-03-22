@@ -20,9 +20,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.documentfile.provider.DocumentFile
+import com.example.opdslibrary.data.library.Book
 import com.example.opdslibrary.data.library.ScanFolder
 import com.example.opdslibrary.viewmodel.AppSettingsViewModel
+import com.example.opdslibrary.viewmodel.DupeState
+import com.example.opdslibrary.viewmodel.DuplicateGroup
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -42,11 +47,13 @@ fun AppSettingsScreen(
     val imageCacheSize by viewModel.imageCacheSize.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val preferredReaderName by viewModel.preferredReaderName.collectAsState()
+    val enableFilenameMatching by viewModel.enableFilenameMatching.collectAsState()
 
     // Library settings states
     val scanFolders by viewModel.scanFolders.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val scanProgress by viewModel.scanProgress.collectAsState()
+    val dupeState by viewModel.dupeState.collectAsState()
 
     val context = LocalContext.current
 
@@ -296,6 +303,30 @@ fun AppSettingsScreen(
                 }
             }
 
+            // Find Duplicates
+            item {
+                OutlinedButton(
+                    onClick = { viewModel.findDuplicates() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = dupeState !is DupeState.Scanning &&
+                        scanFolders.isNotEmpty() &&
+                        scanFolders.any { it.fileCount > 0 }
+                ) {
+                    if (dupeState is DupeState.Scanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scanning for duplicates...")
+                    } else {
+                        Icon(Icons.Default.Search, null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Find Duplicates")
+                    }
+                }
+            }
+
             // ==================== Downloads Section ====================
             item {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -380,6 +411,50 @@ fun AppSettingsScreen(
                             Icons.Default.Edit,
                             contentDescription = "Edit priority",
                             tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            // ==================== OPDS Catalog Section ====================
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "OPDS Catalog",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // Filename matching toggle
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Enable Filename Matching",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Match local books to OPDS entries by filename when direct matching fails. " +
+                                       "Enables catalog features for manually scanned books.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = enableFilenameMatching,
+                            onCheckedChange = { viewModel.setEnableFilenameMatching(it) }
                         )
                     }
                 }
@@ -748,6 +823,15 @@ fun AppSettingsScreen(
         LaunchedEffect(error) {
             viewModel.clearError()
         }
+    }
+
+    // Duplicates review screen — overlays settings when results are ready
+    if (dupeState is DupeState.Results) {
+        DuplicatesReviewScreen(
+            groups = (dupeState as DupeState.Results).groups,
+            onApply = { viewModel.deleteDuplicates(it) },
+            onCancel = { viewModel.dismissDuplicates() }
+        )
     }
 }
 
@@ -1221,6 +1305,173 @@ private fun ReaderPickerDialog(
             }
         }
     )
+}
+
+/**
+ * Full-screen overlay for reviewing and deleting duplicate books.
+ * First book in each group is the suggested keeper; the rest are pre-selected for deletion.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DuplicatesReviewScreen(
+    groups: List<DuplicateGroup>,
+    onApply: (List<Book>) -> Unit,
+    onCancel: () -> Unit
+) {
+    // For each book ID: true = selected for deletion, false = keep
+    val selectionState = remember(groups) {
+        androidx.compose.runtime.mutableStateMapOf<Long, Boolean>().apply {
+            groups.forEach { group ->
+                group.books.forEachIndexed { index, book ->
+                    put(book.id, index != 0)
+                }
+            }
+        }
+    }
+
+    val selectedCount = selectionState.values.count { it }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Duplicates (${groups.size} groups)") },
+                navigationIcon = {
+                    IconButton(onClick = onCancel) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            val toDelete = groups.flatMap { group ->
+                                group.books.filter { selectionState[it.id] == true }
+                            }
+                            onApply(toDelete)
+                        },
+                        enabled = selectedCount > 0
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Delete $selectedCount files",
+                            tint = if (selectedCount > 0) MaterialTheme.colorScheme.error
+                                   else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            )
+        }
+    ) { paddingValues ->
+        if (groups.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("No duplicates found", style = MaterialTheme.typography.bodyLarge)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(groups) { group ->
+                    DuplicateGroupCard(group = group, selectionState = selectionState)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DuplicateGroupCard(
+    group: DuplicateGroup,
+    selectionState: SnapshotStateMap<Long, Boolean>
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = "${group.books.size} files · ${formatCacheSize(group.fileSize)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            group.books.forEachIndexed { index, book ->
+                val isKeeper = index == 0
+                val isSelected = selectionState[book.id] == true
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !isKeeper) {
+                            selectionState[book.id] = !isSelected
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isKeeper) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                text = "KEEP",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    } else {
+                        Checkbox(
+                            checked = isSelected,
+                            onCheckedChange = { selectionState[book.id] = it },
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = book.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = book.filePath.substringAfterLast('/').ifEmpty {
+                                book.filePath.substringAfterLast('\\')
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                if (index < group.books.size - 1) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 32.dp, top = 2.dp, bottom = 2.dp)
+                    )
+                }
+            }
+        }
+    }
 }
 
 private fun formatCacheSize(bytes: Long): String {
