@@ -45,7 +45,8 @@ data class ScanProgress(
     val processedCount: Int = 0,
     val totalCount: Int = 0,
     val currentFile: String? = null,
-    val status: String? = null
+    val status: String? = null,
+    val parseFailedCount: Int = 0
 ) {
     val progressText: String
         get() = if (totalCount > 0) "$processedCount / $totalCount" else ""
@@ -149,6 +150,10 @@ class AppSettingsViewModel(application: Application) : AndroidViewModel(applicat
     // Scan progress state (legacy - for backward compatibility)
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+    private val _parseFailedCount = MutableStateFlow(0)
+    val parseFailedCount: StateFlow<Int> = _parseFailedCount.asStateFlow()
+    private val _parseFailedFiles = MutableStateFlow<List<String>>(emptyList())
+    val parseFailedFiles: StateFlow<List<String>> = _parseFailedFiles.asStateFlow()
 
     // Detailed scan progress
     val scanProgress: StateFlow<ScanProgress> = scanScheduler.observeScanProgress()
@@ -160,9 +165,11 @@ class AppSettingsViewModel(application: Application) : AndroidViewModel(applicat
 
             if (runningWork != null) {
                 val progress = runningWork.progress
+                val failedCount = progress.getInt(LibraryScanWorker.KEY_PARSE_FAILED_COUNT, 0)
 
                 // Update legacy scanning state
                 _isScanning.value = true
+                if (failedCount > 0) _parseFailedCount.value = failedCount
 
                 ScanProgress(
                     isScanning = true,
@@ -170,7 +177,8 @@ class AppSettingsViewModel(application: Application) : AndroidViewModel(applicat
                     processedCount = progress.getInt(LibraryScanWorker.KEY_PROCESSED_COUNT, 0),
                     totalCount = progress.getInt(LibraryScanWorker.KEY_TOTAL_COUNT, 0),
                     currentFile = progress.getString(LibraryScanWorker.KEY_CURRENT_FILE),
-                    status = progress.getString(LibraryScanWorker.KEY_STATUS)
+                    status = progress.getString(LibraryScanWorker.KEY_STATUS),
+                    parseFailedCount = failedCount
                 )
             } else {
                 // Check if any work just completed
@@ -179,8 +187,12 @@ class AppSettingsViewModel(application: Application) : AndroidViewModel(applicat
                 }
                 if (completedWork) {
                     _isScanning.value = false
+                    // Refresh parse-failed count from DB
+                    viewModelScope.launch {
+                        loadParseFailedFiles()
+                    }
                 }
-                ScanProgress(isScanning = false)
+                ScanProgress(isScanning = false, parseFailedCount = _parseFailedCount.value)
             }
         }
         .stateIn(
@@ -449,6 +461,55 @@ class AppSettingsViewModel(application: Application) : AndroidViewModel(applicat
                 _errorMessage.value = "Failed to clear library: ${e.message}"
             } finally {
                 _isLoading.value = false
+            }
+        }
+    }
+
+    // ==================== Parse Failed Books ====================
+
+    fun loadParseFailedFiles() {
+        viewModelScope.launch {
+            val failedBooks = bookDao.getBooksWithUnknownAuthor()
+            _parseFailedCount.value = failedBooks.size
+            _parseFailedFiles.value = failedBooks.map { bwd ->
+                val path = bwd.book.filePath
+                try {
+                    java.net.URLDecoder.decode(path, "UTF-8")
+                } catch (e: Exception) { path }
+                    .substringAfterLast("/")
+                    .substringAfterLast("\\")
+            }
+        }
+    }
+
+    fun deleteParseFailedBooks() {
+        viewModelScope.launch {
+            try {
+                val failedBooks = bookDao.getBooksWithUnknownAuthor()
+                var deletedCount = 0
+                for (bookWithDetails in failedBooks) {
+                    val book = bookWithDetails.book
+                    // Delete the file
+                    try {
+                        val uri = android.net.Uri.parse(book.filePath)
+                        val context = getApplication<Application>()
+                        if (uri.scheme == "content") {
+                            android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri)
+                        } else {
+                            java.io.File(uri.path ?: book.filePath).delete()
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not delete file: ${book.filePath}", e)
+                    }
+                    // Delete from DB
+                    bookDao.delete(book)
+                    deletedCount++
+                }
+                _parseFailedCount.value = 0
+                _parseFailedFiles.value = emptyList()
+                Log.d(TAG, "Deleted $deletedCount parse-failed books")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error deleting parse-failed books", e)
             }
         }
     }

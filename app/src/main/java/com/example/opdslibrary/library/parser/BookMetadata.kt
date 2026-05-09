@@ -13,7 +13,8 @@ data class BookMetadata(
     val isbn: String? = null,
     val description: String? = null,
     val publisher: String? = null,
-    val coverData: ByteArray? = null    // Embedded cover image data
+    val coverData: ByteArray? = null,   // Embedded cover image data
+    val parseFailed: Boolean = false    // True if content parsing failed (fell back to filename)
 ) {
     /**
      * Get title suitable for sorting (lowercase, without leading articles)

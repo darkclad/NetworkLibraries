@@ -504,9 +504,11 @@ fun BookDetailScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deleteBook(bookId, deleteFile = true)
                         showDeleteDialog = false
-                        onBack()
+                        coroutineScope.launch {
+                            val success = viewModel.deleteBook(bookId, deleteFile = true)
+                            if (success) onBack()
+                        }
                     }
                 ) {
                     Text("Delete with File", color = MaterialTheme.colorScheme.error)
@@ -519,9 +521,11 @@ fun BookDetailScreen(
                     }
                     TextButton(
                         onClick = {
-                            viewModel.deleteBook(bookId, deleteFile = false)
                             showDeleteDialog = false
-                            onBack()
+                            coroutineScope.launch {
+                                val success = viewModel.deleteBook(bookId, deleteFile = false)
+                                if (success) onBack()
+                            }
                         }
                     ) {
                         Text("Remove from Library")

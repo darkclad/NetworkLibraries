@@ -22,7 +22,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     companion object {
         private const val TAG = "LibraryViewModel"
-        const val RECENT_PAGE_SIZE = 20
+        const val PAGE_SIZE = 50
     }
 
     private val database = AppDatabase.getDatabase(application)
@@ -39,7 +39,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         BY_AUTHOR,
         BY_SERIES,
         BY_GENRE,
-        RECENT,
         SEARCH_RESULTS
     }
 
@@ -92,7 +91,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     BrowseMode.BY_AUTHOR -> listOf(TITLE, DATE_ADDED) // No author sort when already filtered by author
                     BrowseMode.BY_SERIES -> listOf(TITLE, AUTHOR, DATE_ADDED)
                     BrowseMode.BY_GENRE -> listOf(TITLE, AUTHOR, DATE_ADDED)
-                    BrowseMode.RECENT -> listOf(TITLE, AUTHOR, DATE_ADDED)
                     BrowseMode.SEARCH_RESULTS -> listOf(TITLE, AUTHOR, DATE_ADDED)
                 }
             }
@@ -101,7 +99,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     // UI State
     data class LibraryUiState(
-        val browseMode: BrowseMode = BrowseMode.RECENT,
+        val browseMode: BrowseMode = BrowseMode.ALL_BOOKS,
         val sortOrder: SortOrder = SortOrder.DATE_ADDED_DESC,
         val searchQuery: String = "",
         val selectedAuthorId: Long? = null,
@@ -109,59 +107,70 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         val selectedGenreId: Long? = null,
         val isLoading: Boolean = false,
         val errorMessage: String? = null,
-        // Pagination for RECENT mode
-        val recentPage: Int = 0,
-        val hasMoreRecentBooks: Boolean = true,
-        val isLoadingMoreRecent: Boolean = false
+        // Pagination for ALL_BOOKS mode
+        val currentPage: Int = 0,
+        val hasMoreBooks: Boolean = true,
+        val isLoadingMore: Boolean = false
     )
 
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()
 
-    // Recent books list with pagination
-    private val _recentBooks = MutableStateFlow<List<BookWithDetails>>(emptyList())
-    val recentBooks: StateFlow<List<BookWithDetails>> = _recentBooks.asStateFlow()
+    // Debug: track every browseMode change with stack trace
+    init {
+        viewModelScope.launch {
+            var lastMode: BrowseMode? = null
+            _uiState.collect { state ->
+                if (state.browseMode != lastMode) {
+                    Log.w(TAG, "BROWSE_MODE_CHANGE: $lastMode -> ${state.browseMode}, authorId=${state.selectedAuthorId}, instance=${System.identityHashCode(this@LibraryViewModel)}")
+                    lastMode = state.browseMode
+                }
+            }
+        }
+    }
+
+    // Paginated books list for ALL_BOOKS mode
+    private val _pagedBooks = MutableStateFlow<List<BookWithDetails>>(emptyList())
 
     // Books list based on current browse mode
+    // Only re-trigger when browse-relevant state changes, not pagination fields
+    private data class BrowseKey(
+        val browseMode: BrowseMode,
+        val sortOrder: SortOrder,
+        val selectedAuthorId: Long?,
+        val selectedSeriesId: Long?,
+        val selectedGenreId: Long?
+    )
+
     val books: StateFlow<List<BookWithDetails>> = _uiState
-        .flatMapLatest { state ->
-            when (state.browseMode) {
+        .map { BrowseKey(it.browseMode, it.sortOrder, it.selectedAuthorId, it.selectedSeriesId, it.selectedGenreId) }
+        .distinctUntilChanged()
+        .flatMapLatest { key ->
+            when (key.browseMode) {
                 BrowseMode.ALL_BOOKS -> {
-                    when (state.sortOrder) {
-                        SortOrder.TITLE_ASC -> bookDao.getAllBooksWithDetailsByTitle()
-                        SortOrder.TITLE_DESC -> bookDao.getAllBooksWithDetailsByTitleDesc()
-                        SortOrder.AUTHOR_ASC -> bookDao.getAllBooksWithDetailsByAuthor()
-                        SortOrder.AUTHOR_DESC -> bookDao.getAllBooksWithDetailsByAuthorDesc()
-                        SortOrder.DATE_ADDED_DESC -> bookDao.getAllBooksWithDetailsByDateDesc()
-                        SortOrder.DATE_ADDED_ASC -> bookDao.getAllBooksWithDetailsByDate()
-                    }
+                    // Paginated - data loaded via loadBooks/loadMoreBooks
+                    _pagedBooks
                 }
                 BrowseMode.BY_AUTHOR -> {
-                    state.selectedAuthorId?.let { authorId ->
+                    key.selectedAuthorId?.let { authorId ->
                         bookDao.getBooksForAuthor(authorId).map { books ->
-                            applySortOrder(books, state.sortOrder)
+                            applySortOrder(books, key.sortOrder)
                         }
                     } ?: flowOf(emptyList())
                 }
                 BrowseMode.BY_SERIES -> {
-                    state.selectedSeriesId?.let { seriesId ->
+                    key.selectedSeriesId?.let { seriesId ->
                         bookDao.getBooksForSeries(seriesId).map { books ->
-                            applySortOrder(books, state.sortOrder)
+                            applySortOrder(books, key.sortOrder)
                         }
                     } ?: flowOf(emptyList())
                 }
                 BrowseMode.BY_GENRE -> {
-                    state.selectedGenreId?.let { genreId ->
+                    key.selectedGenreId?.let { genreId ->
                         bookDao.getBooksForGenre(genreId).map { books ->
-                            applySortOrder(books, state.sortOrder)
+                            applySortOrder(books, key.sortOrder)
                         }
                     } ?: flowOf(emptyList())
-                }
-                BrowseMode.RECENT -> {
-                    // Return the paginated recent books flow with applied sort
-                    _recentBooks.map { books ->
-                        applySortOrder(books, state.sortOrder)
-                    }
                 }
                 BrowseMode.SEARCH_RESULTS -> {
                     // Search results are handled separately via searchBooks()
@@ -234,6 +243,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         )
 
     init {
+        Log.d(TAG, "init: ViewModel created, instance=${System.identityHashCode(this)}")
         viewModelScope.launch {
             searchManager.initialize()
 
@@ -242,9 +252,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             val savedSortOrder = appPreferences.getLibrarySortOrderOnce()
 
             val browseMode = try {
-                BrowseMode.valueOf(savedBrowseMode)
+                val mode = BrowseMode.valueOf(savedBrowseMode)
+                // Migrate old RECENT mode to ALL_BOOKS
+                if (mode.name == "RECENT") BrowseMode.ALL_BOOKS else mode
             } catch (e: Exception) {
-                BrowseMode.RECENT
+                BrowseMode.ALL_BOOKS
             }
 
             val sortOrder = try {
@@ -254,8 +266,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             }
 
             // Only apply saved browse mode if no external filter was applied before init
-            // completed (e.g. navigating to library/author/{id} calls selectAuthor before
-            // this coroutine resumes from IO, so we must not overwrite that selection).
             _uiState.update { current ->
                 val effectiveMode = when {
                     current.selectedAuthorId != null -> BrowseMode.BY_AUTHOR
@@ -263,16 +273,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     current.selectedGenreId  != null -> BrowseMode.BY_GENRE
                     else -> browseMode
                 }
+                Log.d(TAG, "init: saved=$browseMode, effective=$effectiveMode, sortOrder=$sortOrder, authorId=${current.selectedAuthorId}, seriesId=${current.selectedSeriesId}")
                 current.copy(browseMode = effectiveMode, sortOrder = sortOrder)
             }
 
-            // Load recent books only when no filter took priority
+            // Load first page for ALL_BOOKS mode
             val finalState = _uiState.value
-            if (finalState.browseMode == BrowseMode.RECENT &&
+            Log.d(TAG, "init: finalState browseMode=${finalState.browseMode}, authorId=${finalState.selectedAuthorId}")
+            if (finalState.browseMode == BrowseMode.ALL_BOOKS &&
                 finalState.selectedAuthorId == null &&
                 finalState.selectedSeriesId == null &&
                 finalState.selectedGenreId  == null) {
-                loadRecentBooks()
+                loadBooks()
             }
         }
     }
@@ -282,45 +294,20 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * Resets selection when switching to a browse-by mode
      */
     fun setBrowseMode(mode: BrowseMode) {
+        Log.d(TAG, "setBrowseMode: mode=$mode, instance=${System.identityHashCode(this)}")
         _uiState.update {
-            when (mode) {
-                BrowseMode.BY_AUTHOR -> it.copy(
-                    browseMode = mode,
-                    selectedAuthorId = null,
-                    selectedSeriesId = null,
-                    selectedGenreId = null
-                )
-                BrowseMode.BY_SERIES -> it.copy(
-                    browseMode = mode,
-                    selectedAuthorId = null,
-                    selectedSeriesId = null,
-                    selectedGenreId = null
-                )
-                BrowseMode.BY_GENRE -> it.copy(
-                    browseMode = mode,
-                    selectedAuthorId = null,
-                    selectedSeriesId = null,
-                    selectedGenreId = null
-                )
-                BrowseMode.RECENT -> it.copy(
-                    browseMode = mode,
-                    selectedAuthorId = null,
-                    selectedSeriesId = null,
-                    selectedGenreId = null,
-                    recentPage = 0,
-                    hasMoreRecentBooks = true
-                )
-                else -> it.copy(
-                    browseMode = mode,
-                    selectedAuthorId = null,
-                    selectedSeriesId = null,
-                    selectedGenreId = null
-                )
-            }
+            it.copy(
+                browseMode = mode,
+                selectedAuthorId = null,
+                selectedSeriesId = null,
+                selectedGenreId = null,
+                currentPage = 0,
+                hasMoreBooks = true
+            )
         }
-        // Load recent books when switching to RECENT mode
-        if (mode == BrowseMode.RECENT) {
-            loadRecentBooks()
+        // Load first page when switching to ALL_BOOKS
+        if (mode == BrowseMode.ALL_BOOKS) {
+            loadBooks()
         }
         // Save browse mode preference (skip SEARCH_RESULTS as it's transient)
         if (mode != BrowseMode.SEARCH_RESULTS) {
@@ -334,7 +321,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * Set sort order
      */
     fun setSortOrder(order: SortOrder) {
-        _uiState.update { it.copy(sortOrder = order) }
+        _uiState.update { it.copy(sortOrder = order, currentPage = 0, hasMoreBooks = true) }
+        // Reload paginated books with new sort
+        if (_uiState.value.browseMode == BrowseMode.ALL_BOOKS) {
+            loadBooks()
+        }
         // Save sort order preference
         viewModelScope.launch {
             appPreferences.setLibrarySortOrder(order.name)
@@ -383,7 +374,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * Apply sort order to a list of books
-     * Used for filtered views (BY_AUTHOR, BY_SERIES, BY_GENRE, RECENT)
+     * Used for filtered views (BY_AUTHOR, BY_SERIES, BY_GENRE)
      */
     private fun applySortOrder(books: List<BookWithDetails>, sortOrder: SortOrder): List<BookWithDetails> {
         return when (sortOrder) {
@@ -401,58 +392,73 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Load the first page of recent books
+     * Fetch a page of books from the DB using the current sort order
      */
-    fun loadRecentBooks() {
+    private suspend fun fetchPage(sortOrder: SortOrder, limit: Int, offset: Int): List<BookWithDetails> {
+        return when (sortOrder) {
+            SortOrder.TITLE_ASC -> bookDao.getBooksPaged_TitleAsc(limit, offset)
+            SortOrder.TITLE_DESC -> bookDao.getBooksPaged_TitleDesc(limit, offset)
+            SortOrder.AUTHOR_ASC -> bookDao.getBooksPaged_AuthorAsc(limit, offset)
+            SortOrder.AUTHOR_DESC -> bookDao.getBooksPaged_AuthorDesc(limit, offset)
+            SortOrder.DATE_ADDED_ASC -> bookDao.getBooksPaged_DateAsc(limit, offset)
+            SortOrder.DATE_ADDED_DESC -> bookDao.getBooksPaged_DateDesc(limit, offset)
+        }
+    }
+
+    /**
+     * Load the first page of books
+     */
+    fun loadBooks() {
         viewModelScope.launch {
             try {
-                _uiState.update { it.copy(isLoading = true, recentPage = 0) }
-                val books = bookDao.getRecentBooksPagedOnce(RECENT_PAGE_SIZE, 0)
-                _recentBooks.value = books
+                _uiState.update { it.copy(isLoading = true, currentPage = 0) }
+                val sortOrder = _uiState.value.sortOrder
+                val books = fetchPage(sortOrder, PAGE_SIZE, 0)
+                _pagedBooks.value = books
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        recentPage = 0,
-                        hasMoreRecentBooks = books.size >= RECENT_PAGE_SIZE
+                        currentPage = 0,
+                        hasMoreBooks = books.size >= PAGE_SIZE
                     )
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load recent books", e)
-                _uiState.update { it.copy(isLoading = false, errorMessage = "Failed to load recent books: ${e.message}") }
+                Log.e(TAG, "Failed to load books", e)
+                _uiState.update { it.copy(isLoading = false, errorMessage = "Failed to load books: ${e.message}") }
             }
         }
     }
 
     /**
-     * Load more recent books (next page)
+     * Load more books (next page)
      */
-    fun loadMoreRecentBooks() {
+    fun loadMoreBooks() {
         val currentState = _uiState.value
-        if (currentState.isLoadingMoreRecent || !currentState.hasMoreRecentBooks) {
+        if (currentState.isLoadingMore || !currentState.hasMoreBooks) {
             return
         }
 
         viewModelScope.launch {
             try {
-                _uiState.update { it.copy(isLoadingMoreRecent = true) }
-                val nextPage = currentState.recentPage + 1
-                val offset = nextPage * RECENT_PAGE_SIZE
-                val moreBooks = bookDao.getRecentBooksPagedOnce(RECENT_PAGE_SIZE, offset)
+                _uiState.update { it.copy(isLoadingMore = true) }
+                val nextPage = currentState.currentPage + 1
+                val offset = nextPage * PAGE_SIZE
+                val moreBooks = fetchPage(currentState.sortOrder, PAGE_SIZE, offset)
 
                 if (moreBooks.isNotEmpty()) {
-                    _recentBooks.value = _recentBooks.value + moreBooks
+                    _pagedBooks.value = _pagedBooks.value + moreBooks
                 }
 
                 _uiState.update {
                     it.copy(
-                        isLoadingMoreRecent = false,
-                        recentPage = nextPage,
-                        hasMoreRecentBooks = moreBooks.size >= RECENT_PAGE_SIZE
+                        isLoadingMore = false,
+                        currentPage = nextPage,
+                        hasMoreBooks = moreBooks.size >= PAGE_SIZE
                     )
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load more recent books", e)
-                _uiState.update { it.copy(isLoadingMoreRecent = false, errorMessage = "Failed to load more books: ${e.message}") }
+                Log.e(TAG, "Failed to load more books", e)
+                _uiState.update { it.copy(isLoadingMore = false, errorMessage = "Failed to load more books: ${e.message}") }
             }
         }
     }
@@ -461,6 +467,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * Select an author for browsing
      */
     fun selectAuthor(authorId: Long) {
+        Log.d(TAG, "selectAuthor: authorId=$authorId, instance=${System.identityHashCode(this)}")
         _uiState.update {
             it.copy(
                 browseMode = BrowseMode.BY_AUTHOR,
@@ -498,7 +505,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun searchBooks(query: String) {
         if (query.isBlank()) {
-            _uiState.update { it.copy(browseMode = BrowseMode.ALL_BOOKS, searchQuery = "") }
+            // Only clear search state, don't change browse mode
+            // (this gets called on every recomposition with empty search field)
+            if (_uiState.value.browseMode == BrowseMode.SEARCH_RESULTS) {
+                _uiState.update { it.copy(browseMode = BrowseMode.ALL_BOOKS, searchQuery = "") }
+            }
             _searchResults.value = emptyList()
             return
         }
@@ -542,32 +553,37 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     /**
      * Delete a book from the library
      */
-    fun deleteBook(bookId: Long, deleteFile: Boolean = false) {
-        viewModelScope.launch {
+    suspend fun deleteBook(bookId: Long, deleteFile: Boolean = false): Boolean {
+        return withContext(Dispatchers.IO) {
             try {
-                val book = bookDao.getBookById(bookId) ?: return@launch
+                val book = bookDao.getBookById(bookId) ?: return@withContext false
 
                 if (deleteFile) {
-                    // Try to delete the physical file
                     try {
                         val uri = Uri.parse(book.filePath)
                         val context = getApplication<Application>()
-                        context.contentResolver.delete(uri, null, null)
+                        if (uri.scheme == "content") {
+                            android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri)
+                        } else {
+                            val file = java.io.File(uri.path ?: book.filePath)
+                            file.delete()
+                        }
+                        Log.d(TAG, "Deleted file: ${book.filePath}")
                     } catch (e: Exception) {
-                        Log.w(TAG, "Could not delete file: ${book.filePath}", e)
+                        Log.e(TAG, "Could not delete file: ${book.filePath}", e)
+                        _uiState.update { it.copy(errorMessage = "Could not delete file: ${e.message}") }
+                        return@withContext false
                     }
                 }
 
-                // Remove from Lucene index
                 searchManager.removeBook(bookId)
-
-                // Delete from database
                 bookDao.delete(book)
-
                 Log.d(TAG, "Deleted book: ${book.title}")
+                true
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to delete book", e)
                 _uiState.update { it.copy(errorMessage = "Failed to delete book: ${e.message}") }
+                false
             }
         }
     }

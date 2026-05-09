@@ -74,7 +74,7 @@ object BookParserFactory {
         }
 
         Log.d(TAG, "Falling back to filename parsing for ${file.name}")
-        return FilenameParser.parse(file.name)
+        return FilenameParser.parse(file.name).copy(parseFailed = true)
     }
 
     /**
@@ -94,7 +94,7 @@ object BookParserFactory {
         }
 
         Log.d(TAG, "Falling back to filename parsing for $filename")
-        return FilenameParser.parse(filename)
+        return FilenameParser.parse(filename).copy(parseFailed = true)
     }
 
     /**

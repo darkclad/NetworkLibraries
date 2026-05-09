@@ -2364,6 +2364,7 @@ fun BookDetailsPage(
     val bookStatus = matchResult?.status
 
     var localBook by remember { mutableStateOf<com.example.opdslibrary.data.library.Book?>(null) }
+    var showUnlinkDialog by remember { mutableStateOf(false) }
 
     // Track if book is being downloaded
     val downloads by AppDownloadManager.downloads.collectAsState()
@@ -2476,7 +2477,7 @@ fun BookDetailsPage(
                             }
                         }
                         bookStatus == CatalogViewModel.BookLibraryStatus.CURRENT -> {
-                            // Show Open button only
+                            // Show Open + Unlink buttons
                             Button(
                                 onClick = {
                                     localBook?.let { lb ->
@@ -2492,6 +2493,13 @@ fun BookDetailsPage(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Open")
+                            }
+                            IconButton(onClick = { showUnlinkDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Clear,
+                                    contentDescription = "Unlink from library",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
                             }
                         }
                         bookStatus == CatalogViewModel.BookLibraryStatus.OUTDATED -> {
@@ -2579,6 +2587,13 @@ fun BookDetailsPage(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Update")
+                            }
+                            IconButton(onClick = { showUnlinkDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Clear,
+                                    contentDescription = "Unlink from library",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
                             }
                         }
                         else -> {
@@ -2763,6 +2778,34 @@ fun BookDetailsPage(
                 )
             }
         }
+    }
+
+    // Unlink confirmation dialog
+    if (showUnlinkDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnlinkDialog = false },
+            title = { Text("Unlink Book") },
+            text = { Text("Remove the link between this OPDS entry and the local book? The local file will be kept. You can then redownload and relink.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUnlinkDialog = false
+                        coroutineScope.launch {
+                            viewModel.unlinkBook(book.id)
+                            localBook = null
+                            Toast.makeText(context, "Book unlinked", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text("Unlink", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnlinkDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

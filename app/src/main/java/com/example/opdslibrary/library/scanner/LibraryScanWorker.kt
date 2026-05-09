@@ -60,6 +60,7 @@ class LibraryScanWorker(
         const val STATUS_INDEXING = "indexing"
         const val STATUS_COMPLETE = "complete"
         const val STATUS_ERROR = "error"
+        const val KEY_PARSE_FAILED_COUNT = "parse_failed_count"
     }
 
     private val database = AppDatabase.getDatabase(context)
@@ -144,6 +145,7 @@ class LibraryScanWorker(
         // Use atomic counters for thread-safe progress tracking
         val discoveredCount = AtomicInteger(0)
         val processedCount = AtomicInteger(0)
+        val parseFailedCount = AtomicInteger(0)
 
         // Mutex for database operations to prevent conflicts
         val dbMutex = Mutex()
@@ -168,7 +170,7 @@ class LibraryScanWorker(
                 launch(Dispatchers.IO) {
                     for (file in fileChannel) {
                         try {
-                            processFileParallel(file, file.uri, folder.id, fullScan, dbMutex)
+                            processFileParallel(file, file.uri, folder.id, fullScan, dbMutex, parseFailedCount)
                             val currentCount = processedCount.incrementAndGet()
                             val totalFound = discoveredCount.get()
 
@@ -197,12 +199,14 @@ class LibraryScanWorker(
         }
 
         val finalCount = processedCount.get()
+        val failedCount = parseFailedCount.get()
 
         // Final progress update
         setProgress(workDataOf(
             KEY_FOLDER_NAME to folder.displayName,
             KEY_PROCESSED_COUNT to finalCount,
             KEY_TOTAL_COUNT to finalCount,
+            KEY_PARSE_FAILED_COUNT to failedCount,
             KEY_STATUS to STATUS_SCANNING
         ))
 
@@ -213,7 +217,7 @@ class LibraryScanWorker(
             fileCount = finalCount
         )
 
-        Log.d(TAG, "Folder scan complete: ${folder.displayName}, processed $finalCount files")
+        Log.d(TAG, "Folder scan complete: ${folder.displayName}, processed $finalCount files, $failedCount parse failures")
     }
 
     /**
@@ -224,7 +228,8 @@ class LibraryScanWorker(
         uri: Uri,
         folderId: Long,
         fullScan: Boolean,
-        dbMutex: Mutex
+        dbMutex: Mutex,
+        parseFailedCount: AtomicInteger = AtomicInteger(0)
     ) {
         val path = uri.toString()
         val filename = file.name ?: return
@@ -252,6 +257,9 @@ class LibraryScanWorker(
 
         // Parse metadata (CPU-bound, no mutex needed)
         val metadata = BookParserFactory.parseBook(uri, context)
+        if (metadata.parseFailed) {
+            parseFailedCount.incrementAndGet()
+        }
 
         // Save to database (use mutex for write operations)
         val bookId = dbMutex.withLock {

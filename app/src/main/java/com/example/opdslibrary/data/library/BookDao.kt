@@ -123,6 +123,66 @@ interface BookDao {
     """)
     suspend fun getRecentBooksPagedOnce(limit: Int, offset: Int): List<BookWithDetails>
 
+    // === Paginated queries for ALL_BOOKS with DB-level sorting ===
+
+    @Transaction
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.titleSort ASC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getBooksPaged_TitleAsc(limit: Int, offset: Int): List<BookWithDetails>
+
+    @Transaction
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.titleSort DESC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getBooksPaged_TitleDesc(limit: Int, offset: Int): List<BookWithDetails>
+
+    @Transaction
+    @Query("""
+        SELECT DISTINCT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        LEFT JOIN book_authors ba ON b.id = ba.bookId
+        LEFT JOIN authors a ON ba.authorId = a.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY a.sortName ASC, b.titleSort ASC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getBooksPaged_AuthorAsc(limit: Int, offset: Int): List<BookWithDetails>
+
+    @Transaction
+    @Query("""
+        SELECT DISTINCT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        LEFT JOIN book_authors ba ON b.id = ba.bookId
+        LEFT JOIN authors a ON ba.authorId = a.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY a.sortName DESC, b.titleSort ASC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getBooksPaged_AuthorDesc(limit: Int, offset: Int): List<BookWithDetails>
+
+    @Transaction
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.addedAt ASC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getBooksPaged_DateAsc(limit: Int, offset: Int): List<BookWithDetails>
+
+    @Transaction
+    @Query("""
+        SELECT b.* FROM books b
+        LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
+        WHERE b.scanFolderId IS NULL OR sf.enabled = 1
+        ORDER BY b.addedAt DESC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getBooksPaged_DateDesc(limit: Int, offset: Int): List<BookWithDetails>
+
     @Query("""
         SELECT COUNT(*) FROM books b
         LEFT JOIN scan_folders sf ON b.scanFolderId = sf.id
@@ -135,6 +195,15 @@ interface BookDao {
     @Transaction
     @Query("SELECT * FROM books WHERE id IN (:ids)")
     suspend fun getBooksByIds(ids: List<Long>): List<BookWithDetails>
+
+    @Transaction
+    @Query("""
+        SELECT DISTINCT b.* FROM books b
+        INNER JOIN book_authors ba ON b.id = ba.bookId
+        INNER JOIN authors a ON ba.authorId = a.id
+        WHERE a.sortName = 'Unknown'
+    """)
+    suspend fun getBooksWithUnknownAuthor(): List<BookWithDetails>
 
     // === Insert/Update/Delete ===
 
@@ -210,6 +279,9 @@ interface BookDao {
 
     @Query("UPDATE books SET opdsRelLinks = :relLinks WHERE opdsEntryId = :entryId AND catalogId = :catalogId")
     suspend fun updateOpdsRelLinksByEntry(entryId: String, catalogId: Long, relLinks: String?)
+
+    @Query("UPDATE books SET opdsEntryId = NULL, catalogId = NULL, opdsUpdated = NULL WHERE opdsEntryId = :entryId AND catalogId = :catalogId")
+    suspend fun clearOpdsLink(entryId: String, catalogId: Long)
 
     /**
      * Check if a book exists and is outdated compared to OPDS entry

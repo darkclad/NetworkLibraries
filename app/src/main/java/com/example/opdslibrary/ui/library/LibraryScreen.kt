@@ -2,7 +2,6 @@ package com.example.opdslibrary.ui.library
 
 import android.content.Intent
 import android.net.Uri
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -28,6 +27,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -67,6 +67,7 @@ fun LibraryScreen(
     isNavigatedFilter: Boolean = false
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    android.util.Log.d("LibraryScreen", "compose: browseMode=${uiState.browseMode}, authorId=${uiState.selectedAuthorId}, vmInstance=${System.identityHashCode(viewModel)}")
     val books by viewModel.books.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val authors by viewModel.authors.collectAsState()
@@ -76,29 +77,6 @@ fun LibraryScreen(
     val totalAuthors by viewModel.totalAuthors.collectAsState()
     val totalSeries by viewModel.totalSeries.collectAsState()
 
-    // Handle system back button for internal browse navigation
-    val needsInternalBack = !isNavigatedFilter && (
-        uiState.browseMode != BrowseMode.ALL_BOOKS ||
-        uiState.selectedAuthorId != null ||
-        uiState.selectedSeriesId != null ||
-        uiState.selectedGenreId != null
-    )
-    BackHandler(enabled = needsInternalBack) {
-        when (uiState.browseMode) {
-            BrowseMode.BY_AUTHOR, BrowseMode.BY_SERIES,
-            BrowseMode.BY_GENRE, BrowseMode.RECENT -> {
-                if (uiState.selectedAuthorId != null ||
-                    uiState.selectedSeriesId != null ||
-                    uiState.selectedGenreId != null) {
-                    viewModel.setBrowseMode(uiState.browseMode)
-                } else {
-                    viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
-                }
-            }
-            BrowseMode.SEARCH_RESULTS -> viewModel.setBrowseMode(BrowseMode.ALL_BOOKS)
-            else -> {}
-        }
-    }
 
     var searchQuery by remember { mutableStateOf("") }
     var dropdownExpanded by remember { mutableStateOf(false) }
@@ -121,6 +99,7 @@ fun LibraryScreen(
     }
 
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     // Preferred reader app
     val appPreferences = remember { AppPreferences(context) }
@@ -176,7 +155,6 @@ fun LibraryScreen(
                                 Text("Genres")
                             }
                         }
-                        BrowseMode.RECENT -> Text("Recent")
                         BrowseMode.SEARCH_RESULTS -> Text("Search Results")
                     }
                 },
@@ -188,7 +166,7 @@ fun LibraryScreen(
                             when (uiState.browseMode) {
                                 BrowseMode.ALL_BOOKS -> onBack()
                                 BrowseMode.BY_AUTHOR, BrowseMode.BY_SERIES,
-                                BrowseMode.BY_GENRE, BrowseMode.RECENT -> {
+                                BrowseMode.BY_GENRE -> {
                                     if (uiState.selectedAuthorId != null ||
                                         uiState.selectedSeriesId != null ||
                                         uiState.selectedGenreId != null) {
@@ -245,14 +223,6 @@ fun LibraryScreen(
                                     showBrowseMenu = false
                                 },
                                 leadingIcon = { Icon(Icons.Default.Info, null) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Recent") },
-                                onClick = {
-                                    viewModel.setBrowseMode(BrowseMode.RECENT)
-                                    showBrowseMenu = false
-                                },
-                                leadingIcon = { Icon(Icons.Default.DateRange, null) }
                             )
                         }
                     }
@@ -482,8 +452,8 @@ fun LibraryScreen(
                     }
                 }
                 else -> {
-                    // Show books grid with pagination for RECENT mode
-                    val isRecentMode = uiState.browseMode == BrowseMode.RECENT
+                    // Show books grid with pagination
+                    val isPaginated = uiState.browseMode == BrowseMode.ALL_BOOKS
                     Box(modifier = Modifier.fillMaxSize()) {
                         BooksGrid(
                             books = displayBooks,
@@ -497,11 +467,13 @@ fun LibraryScreen(
                                 )
                             },
                             onDeleteBook = { book, deleteFile ->
-                                viewModel.deleteBook(book.book.id, deleteFile)
+                                coroutineScope.launch {
+                                    viewModel.deleteBook(book.book.id, deleteFile)
+                                }
                             },
-                            hasMore = if (isRecentMode) uiState.hasMoreRecentBooks else false,
-                            isLoadingMore = if (isRecentMode) uiState.isLoadingMoreRecent else false,
-                            onLoadMore = if (isRecentMode) {{ viewModel.loadMoreRecentBooks() }} else null
+                            hasMore = if (isPaginated) uiState.hasMoreBooks else false,
+                            isLoadingMore = if (isPaginated) uiState.isLoadingMore else false,
+                            onLoadMore = if (isPaginated) {{ viewModel.loadMoreBooks() }} else null
                         )
                     }
                 }

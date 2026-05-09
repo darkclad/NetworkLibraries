@@ -53,6 +53,8 @@ fun AppSettingsScreen(
     val scanFolders by viewModel.scanFolders.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
     val scanProgress by viewModel.scanProgress.collectAsState()
+    val parseFailedCount by viewModel.parseFailedCount.collectAsState()
+    val parseFailedFiles by viewModel.parseFailedFiles.collectAsState()
     val dupeState by viewModel.dupeState.collectAsState()
 
     val context = LocalContext.current
@@ -299,6 +301,84 @@ fun AppSettingsScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // Parse failures notification
+            if (!scanProgress.isScanning && parseFailedCount > 0) {
+                item {
+                    var showDeleteConfirm by remember { mutableStateOf(false) }
+                    var expanded by remember { mutableStateOf(false) }
+                    // Load file list on first expand if not yet loaded
+                    LaunchedEffect(expanded) {
+                        if (expanded && parseFailedFiles.isEmpty()) {
+                            viewModel.loadParseFailedFiles()
+                        }
+                    }
+                    Card(
+                        onClick = {
+                            expanded = !expanded
+                            android.util.Log.d("AppSettings", "Card clicked, expanded=$expanded, parseFailedFiles=${parseFailedFiles.size}, parseFailedCount=$parseFailedCount")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "$parseFailedCount books could not be parsed",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = { showDeleteConfirm = true }
+                                ) {
+                                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                            if (expanded && parseFailedFiles.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                parseFailedFiles.forEach { filename ->
+                                    Text(
+                                        filename,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (showDeleteConfirm) {
+                        AlertDialog(
+                            onDismissRequest = { showDeleteConfirm = false },
+                            title = { Text("Delete unparsed books") },
+                            text = { Text("Delete all books with unknown author (failed to parse metadata)? The files will also be removed.") },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        showDeleteConfirm = false
+                                        viewModel.deleteParseFailedBooks()
+                                    }
+                                ) {
+                                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showDeleteConfirm = false }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        )
                     }
                 }
             }

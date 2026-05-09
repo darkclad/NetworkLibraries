@@ -312,6 +312,20 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Clear the OPDS link for a book so it can be redownloaded and relinked.
+     * Removes opdsEntryId, catalogId, opdsUpdated from the book record and
+     * resets the matching status to NOT_IN_LIBRARY.
+     */
+    suspend fun unlinkBook(entryId: String) {
+        val catalogId = currentCatalogId ?: return
+        bookDao.clearOpdsLink(entryId, catalogId)
+        // Update matching results to show NOT_IN_LIBRARY
+        _matchingResults.value = _matchingResults.value + mapOf(
+            entryId to MatchingResult(entryId, BookLibraryStatus.NOT_IN_LIBRARY)
+        )
+    }
+
+    /**
      * Get the primary author ID for a book matched to an OPDS entry
      * Used for "Open in Library" navigation to author view
      */
@@ -2790,14 +2804,23 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * Check if current feed has search capability
      */
     fun hasSearchCapability(): Boolean {
-        return currentFeed?.hasSearch() == true
+        val feed = currentFeed
+        val hasSearch = feed?.hasSearch() == true
+        val searchLink = feed?.getSearchLink()
+        Log.d(TAG, "hasSearchCapability: $hasSearch, feedTitle='${feed?.title}', feedLinksCount=${feed?.links?.size ?: 0}, searchLink=${searchLink?.let { "href='${it.href}', rel='${it.rel}', type='${it.type}'" } ?: "null"}")
+        if (feed != null && !hasSearch) {
+            Log.d(TAG, "  All feed links: ${feed.links.map { "rel='${it.rel}' type='${it.type}' href='${it.href}'" }}")
+        }
+        return hasSearch
     }
 
     /**
      * Get the search URL template from current feed
      */
     fun getSearchUrl(): String? {
-        return currentFeed?.getSearchLink()?.href
+        val url = currentFeed?.getSearchLink()?.href
+        Log.d(TAG, "getSearchUrl: $url")
+        return url
     }
 
     /**
@@ -2805,7 +2828,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      */
     fun isOpenSearchDescription(): Boolean {
         val searchLink = currentFeed?.getSearchLink() ?: return false
-        return searchLink.type?.contains("opensearchdescription", ignoreCase = true) == true
+        val isOSD = searchLink.type?.contains("opensearchdescription", ignoreCase = true) == true
+        Log.d(TAG, "isOpenSearchDescription: $isOSD, type='${searchLink.type}'")
+        return isOSD
     }
 
     /**
@@ -2823,10 +2848,19 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * @param searchLinkUrl The search link URL (may be a template or OpenSearch Description URL, can be relative)
      */
     fun performSearch(query: String, searchLinkUrl: String) {
-        if (query.isBlank()) return
+        Log.d(TAG, "performSearch: query='$query', searchLinkUrl='$searchLinkUrl'")
+        if (query.isBlank()) {
+            Log.d(TAG, "performSearch: query is blank, skipping")
+            return
+        }
 
         viewModelScope.launch {
-            val catalogId = currentCatalogId ?: return@launch
+            val catalogId = currentCatalogId
+            Log.d(TAG, "performSearch: catalogId=$catalogId, isOpenSearch=${isOpenSearchDescription()}")
+            if (catalogId == null) {
+                Log.e(TAG, "performSearch: catalogId is null, aborting")
+                return@launch
+            }
 
             // Resolve relative URL against current base URL
             val baseUrl = _currentUrl.value
@@ -2884,11 +2918,14 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * Fetch and parse OpenSearch Description document to extract the search template URL
      */
     private suspend fun fetchOpenSearchTemplate(url: String): String? {
+        Log.d(TAG, "fetchOpenSearchTemplate: url=$url")
         return try {
             val response = repository.fetchRawContent(url, storedUsername, storedPassword)
+            Log.d(TAG, "fetchOpenSearchTemplate: response length=${response?.length ?: 0}, first 500 chars: ${response?.take(500)}")
             if (response != null) {
                 parseOpenSearchDescription(response)
             } else {
+                Log.e(TAG, "fetchOpenSearchTemplate: null response")
                 null
             }
         } catch (e: Exception) {
@@ -2945,6 +2982,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * Handles OpenSearch templates with {searchTerms} placeholder
      */
     private fun buildSearchUrl(templateUrl: String, query: String): String {
+        Log.d(TAG, "buildSearchUrl: template='$templateUrl', query='$query'")
         val encodedQuery = java.net.URLEncoder.encode(query.trim(), "UTF-8")
 
         // Remove optional parameters like {startPage?} along with their query param names
@@ -2986,6 +3024,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
             else -> {
                 "$url?q=$encodedQuery"
             }
+        }.also { result ->
+            Log.d(TAG, "buildSearchUrl: result='$result'")
         }
     }
 
