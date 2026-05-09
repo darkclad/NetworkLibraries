@@ -558,20 +558,26 @@ class OpdsMatchingProcessor(
         // Exact match after normalization
         if (title1 == title2) return true
 
-        // In strict mode: if both titles end in a number and those numbers differ,
-        // they are different volumes in a series — reject immediately.
-        // e.g. "ревизор 51" vs "ревизор 52" must NOT match.
-        if (strictMode) {
-            val num1 = title1.trimEnd().substringAfterLast(" ").toIntOrNull()
-            val num2 = title2.trimEnd().substringAfterLast(" ").toIntOrNull()
-            if (num1 != null && num2 != null && num1 != num2) return false
-        }
+        // Always check: if both titles end in a number (with or without # prefix)
+        // and those numbers differ, they are different volumes in a series — reject.
+        // e.g. "точка бифуркации #1" vs "точка бифуркации #15" must NOT match.
+        val num1 = extractTrailingNumber(title1)
+        val num2 = extractTrailingNumber(title2)
+        if (num1 != null && num2 != null && num1 != num2) return false
 
         // Check if one contains the other (for cases like "Book" vs "Book: Subtitle").
         // Require the shorter title to be at least 8 characters to prevent short/numeric
         // tokens (e.g. "1", "II", "run") from falsely matching unrelated longer titles.
+        // Also verify the match doesn't end mid-number to prevent "Book #1" matching "Book #15".
         val shorter = if (title1.length <= title2.length) title1 else title2
-        if (shorter.length >= 8 && (title1.contains(title2) || title2.contains(title1))) return true
+        val longer = if (title1.length <= title2.length) title2 else title1
+        if (shorter.length >= 8 && longer.contains(shorter)) {
+            val matchIndex = longer.indexOf(shorter)
+            val charAfterMatch = longer.getOrNull(matchIndex + shorter.length)
+            // If the character right after the match is a digit, this is a false prefix match
+            // e.g. "book #1" found in "book #15" — the '5' continues the number
+            if (charAfterMatch == null || !charAfterMatch.isDigit()) return true
+        }
 
         // Check Levenshtein distance for typos/minor differences
         val distance = levenshteinDistance(title1, title2)
@@ -581,6 +587,22 @@ class OpdsMatchingProcessor(
         // Use stricter threshold for book detail pages, more lenient for collections
         val threshold = if (strictMode) 0.90 else 0.80
         return similarity >= threshold
+    }
+
+    /**
+     * Extract trailing number from a title, handling formats like:
+     * "Book #15" → 15, "Book 3" → 3, "Book #1" → 1
+     * Returns null if no trailing number found.
+     */
+    private fun extractTrailingNumber(title: String): Int? {
+        val lastToken = title.trimEnd().substringAfterLast(" ")
+        // Try direct parse first ("book 3")
+        lastToken.toIntOrNull()?.let { return it }
+        // Try stripping # prefix ("book #3")
+        if (lastToken.startsWith("#")) {
+            lastToken.removePrefix("#").toIntOrNull()?.let { return it }
+        }
+        return null
     }
 
     /**
