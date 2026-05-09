@@ -38,8 +38,13 @@ This is an Android OPDS (Open Publication Distribution System) catalog browser a
 - `main` → Main menu (Library/Network Libraries)
 - `network_libraries` → OPDS catalog list (StartScreen)
 - `catalog/{catalogId}` → Browse specific catalog (CatalogScreen)
+- `catalog_with_url/{catalogId}/{initialUrl}` → Catalog at specific URL (from library book details)
+- `catalog_with_history/{catalogId}/{navHistory}` → Catalog with restored navigation (View in Catalog)
 - `library` → Local book library
+- `library/author/{authorId}` → Library filtered by author
+- `library/series/{seriesId}` → Library filtered by series
 - `book_detail/{bookId}` → Local book details
+- `app_settings` → Application settings
 
 **Data Layer**:
 - `data/AppDatabase.kt` - Room database with 15+ migration versions. Contains both OPDS entities (catalogs, feed cache, favorites) and Library entities (books, authors, series, genres)
@@ -51,9 +56,16 @@ This is an Android OPDS (Open Publication Distribution System) catalog browser a
 - `BookParserFactory.kt` - Factory pattern for selecting correct parser by file extension
 - All parsers extract metadata and cover images
 
+**OPDS Matching** (`viewmodel/OpdsMatchingProcessor.kt`):
+- Background processor that links local books to OPDS catalog entries
+- Two-phase: fast OPDS ID lookup → queue-based filename/title/author matching
+- Context-aware matching based on page type (author page, series, collection)
+- Coordinates with downloads to avoid race conditions
+
 **Background Processing**:
-- `library/scanner/LibraryScanWorker.kt` - WorkManager-based library scanning
+- `library/scanner/LibraryScanWorker.kt` - WorkManager-based library scanning with parallel workers and parse failure tracking
 - `image/ImageDownloadWorker.kt` - Background image downloading
+- `library/search/BookSearchManager.kt` - Lucene-based full-text search index
 
 ### Data Models
 
@@ -61,9 +73,21 @@ OPDS models in `data/OpdsModels.kt`: `OpdsFeed`, `OpdsEntry`, `OpdsLink`, `OpdsA
 
 Library models in `data/library/`: `Book`, `Author`, `Series`, `Genre` with junction tables for many-to-many relationships
 
+### Key ViewModels
+
+- `CatalogViewModel` - OPDS browsing, feed loading, pagination, navigation history, favorites, search, downloads, auth, alternate URLs, matching integration
+- `LibraryViewModel` - Browse modes (ALL_BOOKS, BY_AUTHOR, BY_SERIES, BY_GENRE, SEARCH_RESULTS), paginated book list with DB-level sorting, search, book CRUD
+- `AppSettingsViewModel` - Scan folders, scanning progress, format priority, download folder, reader preference, duplicate detection, parse failure management
+- `StartScreenViewModel` - OPDS catalog CRUD
+
 ### Configuration
 
 - Min SDK: 26 (Android 8.0)
 - Target SDK: 36
 - Kotlin 2.0.21 with Compose compiler plugin
 - Room with KSP for annotation processing
+- Database version: 18 (12 migrations from v6)
+- OkHttp for networking, Coil for image loading
+- Apache Lucene for full-text search
+- WorkManager for background scanning
+- DataStore for preferences
