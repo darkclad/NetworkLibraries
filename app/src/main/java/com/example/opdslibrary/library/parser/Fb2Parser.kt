@@ -21,11 +21,6 @@ class Fb2Parser : BaseBookMetadataParser() {
         private const val NS_FB2 = "http://www.gribuser.ru/xml/fictionbook/2.0"
         private const val NS_XLINK = "http://www.w3.org/1999/xlink"
 
-        // Debug: crash counter for development
-        @Volatile
-        private var parseErrorCount = 0
-
-        private const val MAX_ERRORS_BEFORE_CRASH = 3
     }
 
     override fun getSupportedExtensions(): List<String> = listOf("fb2")
@@ -35,17 +30,7 @@ class Fb2Parser : BaseBookMetadataParser() {
             try {
                 parseFb2(inputStream, filename)
             } catch (e: Exception) {
-                Log.e(TAG, "Error parsing FB2: $filename", e)
-
-                // DEV: Track parse errors and crash on 3rd error for investigation
-                parseErrorCount++
-                Log.e(TAG, "Parse error count: $parseErrorCount / $MAX_ERRORS_BEFORE_CRASH")
-
-                if (parseErrorCount >= MAX_ERRORS_BEFORE_CRASH) {
-                    Log.e(TAG, "!!! MAX PARSE ERRORS REACHED - CRASHING FOR INVESTIGATION !!!")
-                    throw RuntimeException("FB2 Parser: $MAX_ERRORS_BEFORE_CRASH parse failures reached. Last file: $filename", e)
-                }
-
+                Log.w(TAG, "Failed to parse FB2: $filename (${e.javaClass.simpleName}: ${e.message})")
                 null
             }
         }
@@ -55,14 +40,12 @@ class Fb2Parser : BaseBookMetadataParser() {
         // Read all bytes and detect/fix encoding
         val (correctedContent, detectedEncoding) = EncodingDetector.readWithEncodingDetection(inputStream)
 
-        Log.d(TAG, "=== FB2 PARSING ($filename) ===")
-        Log.d(TAG, "Detected encoding: $detectedEncoding")
-
-        // Log the header for debugging
-        val header = correctedContent.take(1500)
-        Log.d(TAG, "=== FB2 HEADER ===")
-        Log.d(TAG, header)
-        Log.d(TAG, "=== END FB2 HEADER ===")
+        // Log.d(TAG, "=== FB2 PARSING ($filename) ===")
+        // Log.d(TAG, "Detected encoding: $detectedEncoding")
+        // val header = correctedContent.take(1500)
+        // Log.d(TAG, "=== FB2 HEADER ===")
+        // Log.d(TAG, header)
+        // Log.d(TAG, "=== END FB2 HEADER ===")
 
         val factory = XmlPullParserFactory.newInstance()
         // Disable namespace awareness to handle FB2 files with undeclared prefixes (like l:href)
@@ -284,14 +267,14 @@ class Fb2Parser : BaseBookMetadataParser() {
             return null
         }
 
-        // Debug: Log extracted metadata
-        Log.d(TAG, "=== FB2 METADATA EXTRACTED ===")
-        Log.d(TAG, "Title: $title")
-        Log.d(TAG, "Authors: ${authors.map { "${it.firstName} ${it.lastName} (${it.nickname})" }}")
-        Log.d(TAG, "Genres: $genres")
-        Log.d(TAG, "Series: $seriesName #$seriesNumber")
-        Log.d(TAG, "Language: $language, Year: $year")
-        Log.d(TAG, "=== END FB2 METADATA ===")
+        // Debug: Log extracted metadata (disabled)
+        // Log.d(TAG, "=== FB2 METADATA EXTRACTED ===")
+        // Log.d(TAG, "Title: $title")
+        // Log.d(TAG, "Authors: ${authors.map { "${it.firstName} ${it.lastName} (${it.nickname})" }}")
+        // Log.d(TAG, "Genres: $genres")
+        // Log.d(TAG, "Series: $seriesName #$seriesNumber")
+        // Log.d(TAG, "Language: $language, Year: $year")
+        // Log.d(TAG, "=== END FB2 METADATA ===")
 
         // Combine authors and translators
         val allAuthors = authors + translators
