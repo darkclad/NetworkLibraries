@@ -361,8 +361,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     companion object {
         private const val TAG = "CatalogViewModel"
         private const val FAVORITES_URL_PREFIX = "internal://favorites"
+        private const val FAVORITES_AUTHORS_URL = "$FAVORITES_URL_PREFIX/authors"
         private const val LVA_URL_PREFIX = "internal://last-visited-authors"
-        private const val LVA_MAX_ENTRIES = 15
+        private const val LVA_MAX_ENTRIES = 100
     }
 
     /**
@@ -2364,9 +2365,12 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * Build a favorites feed from the database
-     * Returns a pair of (feed, baseUrl) where baseUrl is the original catalog base URL
+     * Returns a pair of (feed, baseUrl) where baseUrl is the original catalog base URL.
+     *
+     * When [authorsOnly] is false (root favorites view), author entries are collapsed under
+     * a synthetic "Authors" navigation entry. When true, only author favorites are returned.
      */
-    private suspend fun buildFavoritesFeed(catalogId: Long, hierarchyFilter: List<String> = emptyList()): Pair<OpdsFeed, String?> {
+    private suspend fun buildFavoritesFeed(catalogId: Long, authorsOnly: Boolean = false): Pair<OpdsFeed, String?> {
         val favorites = favoriteDao.getFavoritesForCatalogOnce(catalogId)
 
         // Extract base URL from the first favorite's hierarchyUrls (use first URL which is the root)
@@ -2383,20 +2387,19 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
             }
         }
 
-        // Build flat list of all favorite entries (no hierarchy grouping)
-        val entries = mutableListOf<OpdsEntry>()
+        val authorEntries = mutableListOf<OpdsEntry>()
+        val otherEntries = mutableListOf<OpdsEntry>()
 
-        Log.d(TAG, "=== Building favorites feed (flat list) ===")
+        Log.d(TAG, "=== Building favorites feed (authorsOnly=$authorsOnly) ===")
         favorites.forEach { favorite ->
             try {
-                val pathList: List<String> = gson.fromJson(favorite.hierarchyPath, object : TypeToken<List<String>>() {}.type)
                 val entry: OpdsEntry = gson.fromJson(favorite.entryJson, OpdsEntry::class.java)
 
-                Log.d(TAG, "  Favorite: ${entry.title}")
-                Log.d(TAG, "    Path: ${pathList.joinToString(" > ")}")
-                Log.d(TAG, "    ID: ${entry.id}")
-
-                entries.add(entry)
+                if (isAuthorEntry(entry)) {
+                    authorEntries.add(entry)
+                } else {
+                    otherEntries.add(entry)
+                }
 
                 // Store navigation history for "Display in catalog" feature (long click)
                 favoriteNavHistoryMap[entry.id] = favorite.navigationHistory
@@ -2404,23 +2407,62 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 Log.e(TAG, "Error parsing favorite", e)
             }
         }
-        Log.d(TAG, "=== Favorites: ${entries.size} entries ===")
+        Log.d(TAG, "=== Favorites: ${authorEntries.size} authors, ${otherEntries.size} other ===")
 
-        // Sort entries alphabetically by title
-        val sortedEntries = entries.sortedBy { entry ->
-            entry.title.lowercase()
+        val sortByTitle = compareBy<OpdsEntry> { it.title.lowercase() }
+
+        val displayEntries: List<OpdsEntry> = if (authorsOnly) {
+            authorEntries.sortedWith(sortByTitle)
+        } else {
+            val nonAuthors = otherEntries.sortedWith(sortByTitle)
+            if (authorEntries.isNotEmpty()) {
+                listOf(buildAuthorsGroupEntry(authorEntries.size)) + nonAuthors
+            } else {
+                nonAuthors
+            }
         }
 
         val feed = OpdsFeed(
-            title = "Favorites",
-            id = "favorites",
+            title = if (authorsOnly) "Authors" else "Favorites",
+            id = if (authorsOnly) "favorites_authors_feed" else "favorites",
             updated = System.currentTimeMillis().toString(),
-            entries = sortedEntries,
+            entries = displayEntries,
             links = emptyList(),
             icon = null
         )
 
         return Pair(feed, baseUrl)
+    }
+
+    /**
+     * Determine whether a favorite entry represents an author page (vs a book or other section).
+     * Uses the same URL heuristic as page-type detection: navigation URL contains "/author/".
+     */
+    private fun isAuthorEntry(entry: OpdsEntry): Boolean {
+        val navUrl = entry.getNavigationUrl() ?: return false
+        return navUrl.contains("/author/", ignoreCase = true)
+    }
+
+    /**
+     * Build the synthetic "Authors" navigation entry that groups all author favorites.
+     */
+    private fun buildAuthorsGroupEntry(count: Int): OpdsEntry {
+        return OpdsEntry(
+            title = "👤 Authors",
+            id = "favorites_authors",
+            links = listOf(
+                OpdsLink(
+                    href = FAVORITES_AUTHORS_URL,
+                    type = "application/atom+xml;profile=opds-catalog",
+                    rel = "subsection"
+                )
+            ),
+            updated = "",
+            content = "",
+            summary = "Author favorites ($count)",
+            author = null,
+            categories = emptyList()
+        )
     }
 
     /**
@@ -2575,7 +2617,11 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
 
                 val catalogId = currentCatalogId ?: return@launch
 
-                val (feed, catalogBaseUrl) = buildFavoritesFeed(catalogId)
+                val authorsOnly = url == FAVORITES_AUTHORS_URL
+                val pageTitle = if (authorsOnly) "Authors" else "Favorites"
+                val pageUrl = if (authorsOnly) FAVORITES_AUTHORS_URL else FAVORITES_URL_PREFIX
+
+                val (feed, catalogBaseUrl) = buildFavoritesFeed(catalogId, authorsOnly)
 
                 // Store the catalog base URL for resolving relative links
                 favoritesCatalogBaseUrl = catalogBaseUrl
@@ -2585,18 +2631,18 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 accumulatedEntries.clear()
                 accumulatedEntries.addAll(feed.entries)
 
-                _currentPageTitle.value = "Favorites"
-                _currentUrl.value = FAVORITES_URL_PREFIX
+                _currentPageTitle.value = pageTitle
+                _currentUrl.value = pageUrl
 
                 // Add to navigation history (store catalog base URL for resolving relative links)
                 if (addToHistory) {
                     navigationHistory.add(NavigationHistoryEntry(
-                        url = FAVORITES_URL_PREFIX,
-                        title = "Favorites",
+                        url = pageUrl,
+                        title = pageTitle,
                         updated = null,
                         favoritesCatalogBaseUrl = catalogBaseUrl
                     ))
-                    Log.d(TAG, "Added favorites to history (baseUrl: $catalogBaseUrl)")
+                    Log.d(TAG, "Added $pageTitle to history (baseUrl: $catalogBaseUrl)")
                 }
                 updateNavigationState()
 
