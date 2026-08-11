@@ -2178,6 +2178,26 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Remove a single author from the Last Visited Authors list.
+     * The entry id is "lva_<rowId>" (see [loadLastVisitedAuthorsFeed]).
+     */
+    fun removeFromLastVisited(entry: OpdsEntry) {
+        val rowId = entry.id.removePrefix("lva_").toLongOrNull() ?: return
+        viewModelScope.launch {
+            try {
+                lastVisitedAuthorDao.deleteById(rowId)
+                Log.d(TAG, "Removed last visited author: ${entry.title} (id=$rowId)")
+                // If we're currently viewing the list, refresh so the entry disappears.
+                if (_currentUrl.value == LVA_URL_PREFIX) {
+                    loadLastVisitedAuthorsFeed(addToHistory = false)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error removing last visited author", e)
+            }
+        }
+    }
+
+    /**
      * Display a favorite entry in its original catalog location
      * Restores the navigation history so back button navigates through the catalog
      */
@@ -2727,7 +2747,12 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 _uiState.value = CatalogUiState.Loading
 
                 val catalogId = currentCatalogId ?: return@launch
+                // Persist order stays newest-first (used by trimToLimit), but the list is
+                // presented alphabetically by author name. Collator = locale-aware, so Cyrillic
+                // and mixed-script names sort naturally.
+                val collator = java.text.Collator.getInstance()
                 val entries = lastVisitedAuthorDao.getForCatalog(catalogId)
+                    .sortedWith(compareBy(collator) { it.authorName })
 
                 val opdsEntries = entries.map { lva ->
                     OpdsEntry(

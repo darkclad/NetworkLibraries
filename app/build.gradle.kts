@@ -18,10 +18,18 @@ android {
         applicationId = "com.example.opdslibrary"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        versionCode = 4
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Cloudflare Access service token for the in-app updater to reach a gated dist path.
+        // Supplied at build time by publish-opds.ps1 (-PCF_ACCESS_CLIENT_ID=… -PCF_ACCESS_CLIENT_SECRET=…).
+        // Empty for local/dev builds -> the updater sends no CF headers (LAN / public path only).
+        val cfClientId = (project.findProperty("CF_ACCESS_CLIENT_ID") as String?) ?: ""
+        val cfClientSecret = (project.findProperty("CF_ACCESS_CLIENT_SECRET") as String?) ?: ""
+        buildConfigField("String", "CF_ACCESS_CLIENT_ID", "\"$cfClientId\"")
+        buildConfigField("String", "CF_ACCESS_CLIENT_SECRET", "\"$cfClientSecret\"")
     }
 
     signingConfigs {
@@ -40,6 +48,7 @@ android {
         }
         release {
             isMinifyEnabled = false
+            isDebuggable = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -53,6 +62,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     applicationVariants.all {

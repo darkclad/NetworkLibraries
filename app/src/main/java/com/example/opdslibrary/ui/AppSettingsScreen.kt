@@ -23,8 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.documentfile.provider.DocumentFile
+import com.example.opdslibrary.BuildConfig
 import com.example.opdslibrary.data.library.Book
 import com.example.opdslibrary.data.library.ScanFolder
+import com.example.opdslibrary.update.AppUpdateChecker
 import com.example.opdslibrary.viewmodel.AppSettingsViewModel
 import com.example.opdslibrary.viewmodel.DupeState
 import com.example.opdslibrary.viewmodel.DuplicateGroup
@@ -66,6 +68,8 @@ fun AppSettingsScreen(
     var showScanFolderPickerDialog by remember { mutableStateOf(false) }
     var showDeleteFolderDialog by remember { mutableStateOf<ScanFolder?>(null) }
     var showClearLibraryDialog by remember { mutableStateOf(false) }
+    // Incremented by the "Check for updates" button to trigger a manual self-update check.
+    var updateCheckTrigger by remember { mutableIntStateOf(0) }
 
     // Folder picker launcher for download folder
     val downloadFolderPickerLauncher = rememberLauncherForActivityResult(
@@ -714,6 +718,45 @@ fun AppSettingsScreen(
                 }
             }
 
+            // ==================== About ====================
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "About",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Version",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        OutlinedButton(onClick = { updateCheckTrigger++ }) {
+                            Text("Check for updates")
+                        }
+                    }
+                }
+            }
+
             // ==================== Danger Zone ====================
             item {
                 Spacer(modifier = Modifier.height(16.dp))
@@ -904,6 +947,9 @@ fun AppSettingsScreen(
             viewModel.clearError()
         }
     }
+
+    // Self-update: renders the update dialogs when the manual check finds a newer build.
+    AppUpdateChecker(manualTrigger = updateCheckTrigger)
 
     // Duplicates review screen — overlays settings when results are ready
     if (dupeState is DupeState.Results) {

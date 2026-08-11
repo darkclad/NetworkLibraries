@@ -10,13 +10,16 @@ An Android application for browsing OPDS (Open Publication Distribution System) 
 - Download books in various formats (FB2, EPUB, PDF, MOBI, AZW3, etc.)
 - Configurable format priority for automatic best-format selection
 - Favorites system to save books and feeds for later
-- Last visited authors for quick access
+- Last visited authors for quick access — listed alphabetically; long-press an author to favorite it or remove it from the list
 - Authentication support for password-protected catalogs
 - Alternate URL fallback (e.g., mirror domains)
 - Feed caching with timestamp-based invalidation
 - Search with OpenSearch support and search history
 - Background image caching
 - Downloads manager with retry and progress tracking
+
+### App Maintenance
+- In-app self-updater — checks a self-hosted publish manifest on launch (and on demand from Settings → About) and installs a newer signed build in place via the system package installer, preserving all data
 
 ### Local Library
 - Scan device folders for e-books (FB2, FB2.ZIP, EPUB, PDF, MOBI, AZW3)
@@ -67,6 +70,22 @@ An Android application for browsing OPDS (Open Publication Distribution System) 
 ```
 
 On Windows, use `gradlew.bat` instead of `./gradlew`.
+
+## Distribution
+
+Field builds are published with `publish-opds.ps1`, which builds a signed **release** APK
+(`com.example.opdslibrary`, keystore `release-keystore.jks`), copies it to the self-hosted
+dist server, and writes an `index.json` manifest that the in-app updater reads. Bump the
+version each time:
+
+```powershell
+.\publish-opds.ps1 -Bump
+```
+
+Because release builds share a stable signature, the updater installs each new build in
+place without losing data. The keystore is gitignored (not in the repo) and lives only on
+the build machine — **back it up**; losing it means future builds can no longer update an
+installed app in place.
 
 ## Default Catalogs
 

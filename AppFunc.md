@@ -71,6 +71,12 @@ The most complex screen. Browses an OPDS feed hierarchy and manages downloads.
 - Add to Favorites / Remove from Favorites
 - "Display in Catalog" (if viewing the Favorites section)
 - "Clear All Favorites" (if at Favorites root)
+- For an author in the **Last Visited Authors** list: **Add to Favorites** + **Remove from Last Visited**
+
+**Last Visited Authors** — a virtual list (📖 entry at the catalog root, shown once you've
+opened at least one author). Authors are listed **alphabetically** (locale-aware, so Cyrillic
+sorts correctly). Tap an author to jump straight back to their page; long-press for the
+overlay above (favorite it, or remove it from the list).
 
 **Error state:**
 - Retry button
@@ -155,6 +161,10 @@ Configuration for the entire app. Organized in sections:
 ### Cache
 - **Image Cache** — shows current size; Clear button (disabled when empty)
   - Clears all cached covers and icons (re-downloaded on next view)
+
+### About
+- **Version** — current app version name and build number
+- **Check for updates** — asks the self-hosted publish manifest for a newer build; if one exists, offers to download and install it in place (data preserved). The app also does this silently once on launch.
 
 ### Danger Zone
 - **Clear Library Database** — removes all book metadata; files on disk are untouched, scan folders are preserved

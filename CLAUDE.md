@@ -26,6 +26,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 On Windows, use `gradlew.bat` instead of `./gradlew`.
 
+### Distribution / self-update
+
+`publish-opds.ps1` builds a signed **release** APK, copies it to the self-hosted dist server,
+and writes an `index.json` manifest for the in-app updater. Bump the version each publish:
+
+```powershell
+.\publish-opds.ps1 -Bump          # build release + publish (default channel)
+.\publish-opds.ps1 -BuildType debug   # separate .debug package, local testing only
+```
+
+The field app is the release package `com.example.opdslibrary` (stable `release-keystore.jks`
+signature), so each new build installs in place and preserves data. The keystore is gitignored
+and local to the build machine — back it up (its password is in `app/build.gradle.kts`).
+
 ## Architecture Overview
 
 This is an Android OPDS (Open Publication Distribution System) catalog browser and local e-book library manager built with Jetpack Compose.
@@ -67,6 +81,11 @@ This is an Android OPDS (Open Publication Distribution System) catalog browser a
 - `image/ImageDownloadWorker.kt` - Background image downloading
 - `library/search/BookSearchManager.kt` - Lucene-based full-text search index
 
+**In-app self-updater** (`update/`):
+- `AppUpdater.kt` - reads the publish `index.json` manifest, downloads a newer APK (SHA-256 verified), and hands it to the system `PackageInstaller`. Optional Cloudflare Access headers via `BuildConfig.CF_ACCESS_*` (embedded by `publish-opds.ps1`). Requires `buildConfig = true` and the `REQUEST_INSTALL_PACKAGES` permission.
+- `AppInstallReceiver.kt` - PackageInstaller status callbacks (launches the confirm screen).
+- `AppUpdateChecker.kt` - Compose front-end: silent check on launch (wired in `MainActivity`) + manual "Check for updates" in Settings → About.
+
 ### Data Models
 
 OPDS models in `data/OpdsModels.kt`: `OpdsFeed`, `OpdsEntry`, `OpdsLink`, `OpdsAuthor`, `OpdsCategory`
@@ -91,3 +110,5 @@ Library models in `data/library/`: `Book`, `Author`, `Series`, `Genre` with junc
 - Apache Lucene for full-text search
 - WorkManager for background scanning
 - DataStore for preferences
+- `buildConfig = true`; `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET` build fields (empty unless supplied by the publish script) for the in-app updater
+- Release signed with `release-keystore.jks`; `versionCode` bumped per published build via `publish-opds.ps1 -Bump`

@@ -607,6 +607,9 @@ fun CatalogScreen(
     if (showFavoritesOverlay && selectedEntryForOverlay != null) {
         val entry = selectedEntryForOverlay!!
         val isFavoritesEntry = entry.id == "favorites_root"
+        // A single author row in the Last Visited Authors list (id = "lva_<rowId>", not "lva_root").
+        val isLastVisitedEntry = entry.id.startsWith("lva_") &&
+            entry.id.removePrefix("lva_").toLongOrNull() != null
         val isFavoritesSubcategory = isBrowsingFavorites && entry.links.any {
             it.href.startsWith("internal://favorites")
         }
@@ -648,7 +651,37 @@ fun CatalogScreen(
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    if (isFavoritesEntry) {
+                    if (isLastVisitedEntry) {
+                        // Long-pressed an author in the Last Visited list: offer both actions.
+                        TextButton(
+                            onClick = {
+                                viewModel.addToFavorites(entry)
+                                showFavoritesOverlay = false
+                                selectedEntryForOverlay = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Add to Favorites",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                viewModel.removeFromLastVisited(entry)
+                                showFavoritesOverlay = false
+                                selectedEntryForOverlay = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Remove from Last Visited",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    } else if (isFavoritesEntry) {
                         // Show "Clear All Favorites" for favorites root
                         TextButton(
                             onClick = {

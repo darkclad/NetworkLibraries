@@ -46,3 +46,7 @@ local.properties
 
 # Google Services
 google-services.json
+
+# Local device backups and scratch DBs (never commit)
+/.device-backup/
+/history.db

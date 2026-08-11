@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -24,6 +25,7 @@ import com.example.opdslibrary.ui.StartScreen
 import com.example.opdslibrary.ui.library.BookDetailScreen
 import com.example.opdslibrary.ui.library.LibraryScreen
 import com.example.opdslibrary.ui.theme.OpdsLibraryTheme
+import com.example.opdslibrary.update.AppUpdateChecker
 import com.example.opdslibrary.viewmodel.AppSettingsViewModel
 import com.example.opdslibrary.viewmodel.CatalogViewModel
 import com.example.opdslibrary.viewmodel.LibraryViewModel
@@ -47,9 +49,13 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppNavigation(
-                        onExit = { finish() }
-                    )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        AppNavigation(
+                            onExit = { finish() }
+                        )
+                        // Silent self-update check on launch (offers a newer APK if published).
+                        AppUpdateChecker(autoCheckOnLaunch = true)
+                    }
                 }
             }
         }
