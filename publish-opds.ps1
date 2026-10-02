@@ -38,8 +38,8 @@ $gradle  = "$proj\app\build.gradle.kts"
 $distDir = 'V:\dist\opds'                          # = /mnt/user/appdata/dist/opds
 $baseUrl = 'https://dist.darkclad.org/opds'
 # Cloudflare Access service token for the in-app updater to reach a gated /opds path.
-# Untracked local creds file (never in git); embedded into the APK's BuildConfig at build time.
-$cfCredFile = 'D:\Users\dvladi\Documents\Unraid\.distribution-cf'
+# Read from the SOPS vault (secret 'distribution-cf') and embedded into the APK's BuildConfig.
+$cfSecret = 'distribution-cf'
 
 if (-not (Test-Path $distDir)) { throw "Dist share not reachable: $distDir (is V: mapped to \\SERVERNASN3\appdata?)" }
 
@@ -72,22 +72,14 @@ if (-not $SkipBuild) {
   $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
   $task = if ($BuildType -eq 'release') { ':app:assembleRelease' } else { ':app:assembleDebug' }
   # Embed the Cloudflare Access service token so the shipped APK's updater can fetch a gated
-  # /opds path (dev/local builds omit it -> no CF headers). Read from the untracked creds file.
+  # /opds path over WAN. A build without it silently loses off-LAN updates, so missing = fail.
   $cfArgs = @()
-  if (Test-Path $cfCredFile) {
-    $cf   = Get-Content $cfCredFile
-    $cid  = (($cf | Where-Object { $_ -match 'cf_access_client_id' })     -split 'CF-Access-Client-Id:\s*')[1]
-    $csec = (($cf | Where-Object { $_ -match 'cf_access_client_secret' }) -split 'CF-Access-Client-Secret:\s*')[1]
-    if ($cid)  { $cid  = $cid.Trim() }
-    if ($csec) { $csec = $csec.Trim() }
-    if ($cid -and $csec) {
-      $cfArgs = @("-PCF_ACCESS_CLIENT_ID=$cid", "-PCF_ACCESS_CLIENT_SECRET=$csec")
-      Write-Host "  (embedding Cloudflare Access service token for the updater)" -ForegroundColor DarkGray
-    } else {
-      Write-Host "  (WARN: $cfCredFile present but could not parse the token -- APK updater will send no CF headers)" -ForegroundColor Yellow
-    }
-  } else {
-    Write-Host "  (no CF creds file -- APK updater will send no CF headers)" -ForegroundColor Yellow
+  if ($BuildType -eq 'release') {
+    $cid  = (secret get $cfSecret cf_access_client_id)     -replace '^CF-Access-Client-Id:\s*', ''
+    $csec = (secret get $cfSecret cf_access_client_secret) -replace '^CF-Access-Client-Secret:\s*', ''
+    if (-not $cid -or -not $csec) { throw "Could not read the Cloudflare Access token from vault secret '$cfSecret'" }
+    $cfArgs = @("-PCF_ACCESS_CLIENT_ID=$($cid.Trim())", "-PCF_ACCESS_CLIENT_SECRET=$($csec.Trim())")
+    Write-Host "  (embedding Cloudflare Access service token for the updater)" -ForegroundColor DarkGray
   }
   & "$proj\gradlew.bat" -p $proj $task @cfArgs --console=plain
   if ($LASTEXITCODE -ne 0) { throw "Gradle build failed" }
