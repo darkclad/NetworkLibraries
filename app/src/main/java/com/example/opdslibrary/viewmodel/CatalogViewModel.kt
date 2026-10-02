@@ -1,6 +1,7 @@
 package com.example.opdslibrary.viewmodel
 
 import android.app.Application
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -772,6 +773,19 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                     currentEntry = null
                 )
             }
+        }
+
+        // inpx-web: an author's own page is /opds/author?author==Name (the "=" marks an exact
+        // name rather than a prefix group like author=аб); series sub-pages add &series=
+        val inpxAuthor = inpxAuthorFromUrl(currentUrlValue)
+        if (inpxAuthor != null && Uri.parse(currentUrlValue).getQueryParameter("series").isNullOrEmpty()) {
+            Log.i(TAG, "→ Detected AUTHOR_PAGE (inpx-web author query): '$inpxAuthor'")
+            Log.d(TAG, "═══════════════════════════════════════════════════════════")
+            return OpdsBrowsingContext(
+                pageType = OpdsPageType.AUTHOR_PAGE,
+                authorName = inpxAuthor,
+                currentEntry = null
+            )
         }
 
         // Check if this is a book detail page (single acquisition entry)
@@ -2460,7 +2474,21 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      */
     private fun isAuthorEntry(entry: OpdsEntry): Boolean {
         val navUrl = entry.getNavigationUrl() ?: return false
-        return navUrl.contains("/author/", ignoreCase = true)
+        return navUrl.contains("/author/", ignoreCase = true) || inpxAuthorFromUrl(navUrl) != null
+    }
+
+    /**
+     * Author name from an inpx-web author URL (/opds/author?author==Name), or null.
+     * A single "=" prefix means an exact author; without it the value is a prefix group.
+     */
+    private fun inpxAuthorFromUrl(url: String): String? {
+        if (!url.contains("/opds/author?", ignoreCase = true)) return null
+        val value = try {
+            Uri.parse(url).getQueryParameter("author")
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        return value.takeIf { it.startsWith("=") }?.substring(1)?.trim()?.ifEmpty { null }
     }
 
     /**
