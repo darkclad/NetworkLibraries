@@ -67,7 +67,31 @@ class OpdsParser {
                 else -> skip(parser)
             }
         }
-        return OpdsFeed(id, title, updated, author, entries, links, icon)
+        return normalizeInpxWeb(OpdsFeed(id, title, updated, author, entries, links, icon))
+    }
+
+    /**
+     * inpx-web (self-hosted Flibusta/lib.rus.ec) quirks:
+     * - paging is an "[Следующая страница]" entry (id next_page) instead of a rel="next"
+     *   feed link, so it is turned into a feed link and auto-paging works;
+     * - prefix-group entries are titled "АБ~"; the trailing "~" is dropped.
+     */
+    private fun normalizeInpxWeb(feed: OpdsFeed): OpdsFeed {
+        val pageEntries = feed.entries.filter { it.id == "next_page" || it.id == "prev_page" }
+        val hasPrefixGroups = feed.entries.any { it.title.endsWith("~") && it.isNavigation() }
+        if (pageEntries.isEmpty() && !hasPrefixGroups) return feed
+
+        val links = feed.links.toMutableList()
+        val nextHref = pageEntries.firstOrNull { it.id == "next_page" }?.links?.firstOrNull()?.href
+        if (nextHref != null && links.none { it.rel == "next" }) {
+            links.add(OpdsLink(href = nextHref, type = "application/atom+xml;profile=opds-catalog", rel = "next"))
+        }
+        val entries = (feed.entries - pageEntries.toSet()).map { entry ->
+            if (entry.title.endsWith("~") && entry.isNavigation()) {
+                entry.copy(title = entry.title.dropLast(1))
+            } else entry
+        }
+        return feed.copy(entries = entries, links = links)
     }
 
     @Throws(XmlPullParserException::class, IOException::class)

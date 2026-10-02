@@ -400,14 +400,15 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         suspend fun ensureDefaultCatalogsExist(catalogDao: CatalogDao) {
-            // Ensure all 4 default catalogs exist
+            // Ensure all default catalogs exist
             // Format: url, name, icon, alternateUrl (null if none)
             data class CatalogInfo(val url: String, val name: String, val icon: String, val alternateUrl: String?)
             val defaultCatalogs = listOf(
                 CatalogInfo("http://flibusta.is/opds", "Flibusta", "http://flibusta.is/favicon.ico", "http://flibusta.net/opds"),
                 CatalogInfo("https://m.gutenberg.org/ebooks.opds/", "Project Gutenberg", "https://www.gutenberg.org/gutenberg/favicon.ico", null),
                 CatalogInfo("https://manybooks.net/opds/index.php", "Manybooks", "https://manybooks.net/sites/default/files/favicon_3.ico", null),
-                CatalogInfo("https://www.smashwords.com/lexcycle/feed", "Smashwords", "https://www.smashwords.com/favicon.ico", null)
+                CatalogInfo("https://www.smashwords.com/lexcycle/feed", "Smashwords", "https://www.smashwords.com/favicon.ico", null),
+                CatalogInfo("https://books.darkclad.org/flibusta/opds", "Flibusta (darkclad)", "https://books.darkclad.org/flibusta/favicon.ico", null)
             )
 
             defaultCatalogs.forEachIndexed { index, catalog ->
