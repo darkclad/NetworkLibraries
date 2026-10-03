@@ -408,7 +408,8 @@ abstract class AppDatabase : RoomDatabase() {
                 CatalogInfo("https://m.gutenberg.org/ebooks.opds/", "Project Gutenberg", "https://www.gutenberg.org/gutenberg/favicon.ico", null),
                 CatalogInfo("https://manybooks.net/opds/index.php", "Manybooks", "https://manybooks.net/sites/default/files/favicon_3.ico", null),
                 CatalogInfo("https://www.smashwords.com/lexcycle/feed", "Smashwords", "https://www.smashwords.com/favicon.ico", null),
-                CatalogInfo("https://books.darkclad.org/flibusta/opds", "Flibusta (darkclad)", "https://books.darkclad.org/flibusta/favicon.ico", null)
+                CatalogInfo("https://books.darkclad.org/flibusta/opds", "Flibusta (darkclad)", "https://books.darkclad.org/flibusta/favicon.ico", null),
+                CatalogInfo("https://books.darkclad.org/librusec/opds", "lib.rus.ec (darkclad)", "https://books.darkclad.org/librusec/favicon.ico", null)
             )
 
             defaultCatalogs.forEachIndexed { index, catalog ->
