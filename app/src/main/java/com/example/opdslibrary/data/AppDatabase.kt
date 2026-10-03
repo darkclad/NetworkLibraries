@@ -375,28 +375,14 @@ abstract class AppDatabase : RoomDatabase() {
      * Callback to populate the database with default data on first launch
      */
     private class DatabaseCallback : RoomDatabase.Callback() {
-        override fun onCreate(db: SupportSQLiteDatabase) {
-            super.onCreate(db)
-            INSTANCE?.let { database ->
-                CoroutineScope(Dispatchers.IO).launch {
-                    populateDatabase(database.catalogDao())
-                }
-            }
-        }
-
         override fun onOpen(db: SupportSQLiteDatabase) {
             super.onOpen(db)
-            // Ensure all default catalogs exist even after migrations
+            // Sync default catalogs on every open (also runs right after first-time creation)
             INSTANCE?.let { database ->
                 CoroutineScope(Dispatchers.IO).launch {
                     ensureDefaultCatalogsExist(database.catalogDao())
                 }
             }
-        }
-
-        suspend fun populateDatabase(catalogDao: CatalogDao) {
-            // Add default free OPDS catalogs
-            addDefaultCatalogs(catalogDao)
         }
 
         suspend fun ensureDefaultCatalogsExist(catalogDao: CatalogDao) {
@@ -405,12 +391,19 @@ abstract class AppDatabase : RoomDatabase() {
             data class CatalogInfo(val url: String, val name: String, val icon: String, val alternateUrl: String?)
             val defaultCatalogs = listOf(
                 CatalogInfo("http://flibusta.is/opds", "Flibusta", "http://flibusta.is/favicon.ico", "http://flibusta.net/opds"),
-                CatalogInfo("https://m.gutenberg.org/ebooks.opds/", "Project Gutenberg", "https://www.gutenberg.org/gutenberg/favicon.ico", null),
-                CatalogInfo("https://manybooks.net/opds/index.php", "Manybooks", "https://manybooks.net/sites/default/files/favicon_3.ico", null),
-                CatalogInfo("https://www.smashwords.com/lexcycle/feed", "Smashwords", "https://www.smashwords.com/favicon.ico", null),
                 CatalogInfo("https://books.darkclad.org/flibusta/opds", "Flibusta (darkclad)", "https://books.darkclad.org/flibusta/favicon.ico", null),
                 CatalogInfo("https://books.darkclad.org/librusec/opds", "lib.rus.ec (darkclad)", "https://books.darkclad.org/librusec/favicon.ico", null)
             )
+
+            // Former defaults, dropped from the list: remove them from existing installs too
+            val retiredCatalogUrls = listOf(
+                "https://m.gutenberg.org/ebooks.opds/",
+                "https://manybooks.net/opds/index.php",
+                "https://www.smashwords.com/lexcycle/feed"
+            )
+            retiredCatalogUrls.forEach { url ->
+                catalogDao.getCatalogByUrl(url)?.let { catalogDao.delete(it) }
+            }
 
             defaultCatalogs.forEachIndexed { index, catalog ->
                 if (catalogDao.catalogExists(catalog.url) == 0) {
@@ -433,58 +426,6 @@ abstract class AppDatabase : RoomDatabase() {
                     }
                 }
             }
-        }
-
-        private suspend fun addDefaultCatalogs(catalogDao: CatalogDao) {
-            // Flibusta (Russian books)
-            if (catalogDao.catalogExists("http://flibusta.is/opds") > 0) return
-            catalogDao.insert(
-                OpdsCatalog(
-                    url = "http://flibusta.is/opds",
-                    customName = null,
-                    opdsName = "Flibusta",
-                    iconUrl = "http://flibusta.is/favicon.ico",
-                    iconUpdated = null,
-                    isDefault = true,
-                    alternateUrl = "http://flibusta.net/opds"
-                )
-            )
-
-            // Project Gutenberg
-            catalogDao.insert(
-                OpdsCatalog(
-                    url = "https://m.gutenberg.org/ebooks.opds/",
-                    customName = null,
-                    opdsName = "Project Gutenberg",
-                    iconUrl = "https://www.gutenberg.org/gutenberg/favicon.ico",
-                    iconUpdated = null,
-                    isDefault = false
-                )
-            )
-
-            // Manybooks
-            catalogDao.insert(
-                OpdsCatalog(
-                    url = "https://manybooks.net/opds/index.php",
-                    customName = null,
-                    opdsName = "Manybooks",
-                    iconUrl = "https://manybooks.net/sites/default/files/favicon_3.ico",
-                    iconUpdated = null,
-                    isDefault = false
-                )
-            )
-
-            // Smashwords
-            catalogDao.insert(
-                OpdsCatalog(
-                    url = "https://www.smashwords.com/lexcycle/feed",
-                    customName = null,
-                    opdsName = "Smashwords",
-                    iconUrl = "https://www.smashwords.com/favicon.ico",
-                    iconUpdated = null,
-                    isDefault = false
-                )
-            )
         }
 
     }
