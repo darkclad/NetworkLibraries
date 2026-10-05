@@ -18,7 +18,7 @@ android {
         applicationId = "com.example.opdslibrary"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
+        versionCode = 10
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -30,6 +30,13 @@ android {
         val cfClientSecret = (project.findProperty("CF_ACCESS_CLIENT_SECRET") as String?) ?: ""
         buildConfigField("String", "CF_ACCESS_CLIENT_ID", "\"$cfClientId\"")
         buildConfigField("String", "CF_ACCESS_CLIENT_SECRET", "\"$cfClientSecret\"")
+
+        // Basic auth for the self-hosted inpx-web libraries (books.darkclad.org) away from home.
+        // Supplied by publish-opds.ps1 from the `books-opds` vault secret; empty for local/dev builds.
+        val booksUser = (project.findProperty("BOOKS_OPDS_USER") as String?) ?: ""
+        val booksPass = (project.findProperty("BOOKS_OPDS_PASS") as String?) ?: ""
+        buildConfigField("String", "BOOKS_OPDS_USER", "\"$booksUser\"")
+        buildConfigField("String", "BOOKS_OPDS_PASS", "\"$booksPass\"")
     }
 
     signingConfigs {

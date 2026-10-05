@@ -39,6 +39,7 @@ class ImageCacheManager(private val context: Context) {
     }
 
     private val okHttpClient = OkHttpClient.Builder()
+        .addInterceptor(com.example.opdslibrary.network.BooksAuth.interceptor)
         .followRedirects(true)
         .followSslRedirects(true)
         .connectTimeout(10, TimeUnit.SECONDS)

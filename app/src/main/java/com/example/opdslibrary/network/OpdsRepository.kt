@@ -37,6 +37,7 @@ class HtmlResponseException(val url: String, message: String) : Exception(messag
 class OpdsRepository(private val context: Context) {
 
     private val client = OkHttpClient.Builder()
+        .addInterceptor(BooksAuth.interceptor)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()

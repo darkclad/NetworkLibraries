@@ -40,6 +40,7 @@ $baseUrl = 'https://dist.darkclad.org/opds'
 # Cloudflare Access service token for the in-app updater to reach a gated /opds path.
 # Read from the SOPS vault (secret 'distribution-cf') and embedded into the APK's BuildConfig.
 $cfSecret = 'distribution-cf'
+# books.darkclad.org OPDS Basic auth comes from vault secret 'books-opds' (user/pass).
 
 if (-not (Test-Path $distDir)) { throw "Dist share not reachable: $distDir (is V: mapped to \\SERVERNASN3\appdata?)" }
 
@@ -80,6 +81,12 @@ if (-not $SkipBuild) {
     if (-not $cid -or -not $csec) { throw "Could not read the Cloudflare Access token from vault secret '$cfSecret'" }
     $cfArgs = @("-PCF_ACCESS_CLIENT_ID=$($cid.Trim())", "-PCF_ACCESS_CLIENT_SECRET=$($csec.Trim())")
     Write-Host "  (embedding Cloudflare Access service token for the updater)" -ForegroundColor DarkGray
+    # Basic auth for the self-hosted books.darkclad.org libraries over the CF tunnel.
+    $bUser = secret get books-opds user
+    $bPass = secret get books-opds pass
+    if (-not $bUser -or -not $bPass) { throw "Could not read the books.darkclad.org password from vault secret 'books-opds'" }
+    $cfArgs += @("-PBOOKS_OPDS_USER=$($bUser.Trim())", "-PBOOKS_OPDS_PASS=$($bPass.Trim())")
+    Write-Host "  (embedding books.darkclad.org OPDS credentials)" -ForegroundColor DarkGray
   }
   & "$proj\gradlew.bat" -p $proj $task @cfArgs --console=plain
   if ($LASTEXITCODE -ne 0) { throw "Gradle build failed" }

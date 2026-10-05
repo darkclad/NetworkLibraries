@@ -39,6 +39,7 @@ class BookDownloader(private val context: Context) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(CONNECT_TIMEOUT, TimeUnit.SECONDS)
         .readTimeout(READ_TIMEOUT, TimeUnit.SECONDS)
+        .addInterceptor(com.example.opdslibrary.network.BooksAuth.interceptor)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()

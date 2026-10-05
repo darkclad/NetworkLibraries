@@ -3198,6 +3198,7 @@ fun startDownloadWithFilename(
         try {
             // Make HEAD request to get Content-Disposition header
             val client = okhttp3.OkHttpClient.Builder()
+                .addInterceptor(com.example.opdslibrary.network.BooksAuth.interceptor)
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)

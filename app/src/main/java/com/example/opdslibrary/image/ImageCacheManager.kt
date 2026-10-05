@@ -100,6 +100,7 @@ class ImageCacheManager(private val context: Context) {
             connection.readTimeout = READ_TIMEOUT
             connection.instanceFollowRedirects = true
             connection.setRequestProperty("User-Agent", "OPDS Library Android App")
+            com.example.opdslibrary.network.BooksAuth.apply(connection)
 
             try {
                 connection.connect()

@@ -32,6 +32,11 @@ class OpdsApplication : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
+            .okHttpClient {
+                okhttp3.OkHttpClient.Builder()
+                    .addInterceptor(com.example.opdslibrary.network.BooksAuth.interceptor)
+                    .build()
+            }
             .components {
                 add(CachedImageInterceptor(this@OpdsApplication))
             }
