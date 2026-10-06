@@ -507,7 +507,9 @@ fun BookDetailScreen(
                         showDeleteDialog = false
                         coroutineScope.launch {
                             val success = viewModel.deleteBook(bookId, deleteFile = true)
-                            if (success) onBack()
+                            if (success) onBack() else viewModel.uiState.value.errorMessage?.let {
+                                showLibraryError(context, it); viewModel.clearError()
+                            }
                         }
                     }
                 ) {
@@ -524,7 +526,9 @@ fun BookDetailScreen(
                             showDeleteDialog = false
                             coroutineScope.launch {
                                 val success = viewModel.deleteBook(bookId, deleteFile = false)
-                                if (success) onBack()
+                                if (success) onBack() else viewModel.uiState.value.errorMessage?.let {
+                                    showLibraryError(context, it); viewModel.clearError()
+                                }
                             }
                         }
                     ) {

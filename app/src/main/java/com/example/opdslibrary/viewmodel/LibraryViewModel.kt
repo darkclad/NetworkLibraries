@@ -21,6 +21,10 @@ import kotlinx.coroutines.withContext
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
+        /** Delete failed only because "All files access" has not been granted. */
+        const val ALL_FILES_ACCESS_NEEDED =
+            "Grant \"All files access\" to delete books this app did not download itself"
+
         private const val TAG = "LibraryViewModel"
         const val PAGE_SIZE = 50
     }
@@ -563,10 +567,30 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         val uri = Uri.parse(book.filePath)
                         val context = getApplication<Application>()
                         if (uri.scheme == "content") {
-                            android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri)
+                            try {
+                                if (!android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri)) {
+                                    throw java.io.IOException("Android refused to delete the file")
+                                }
+                            } catch (e: SecurityException) {
+                                // Folder access is granted per install; a folder added under an
+                                // earlier/different install of the app is no longer writable
+                                throw java.io.IOException(
+                                    "No write access to this book's folder. Remove the folder and add it " +
+                                        "again in Library settings, then retry."
+                                )
+                            }
                         } else {
                             val file = java.io.File(uri.path ?: book.filePath)
-                            file.delete()
+                            if (file.exists() && !file.delete()) {
+                                // Android 11+ refuses to delete files another app (or an
+                                // earlier install) created unless we hold "All files access"
+                                val needsAccess = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+                                    !android.os.Environment.isExternalStorageManager()
+                                throw java.io.IOException(
+                                    if (needsAccess) ALL_FILES_ACCESS_NEEDED
+                                    else "Android refused to delete ${file.name}"
+                                )
+                            }
                         }
                         Log.d(TAG, "Deleted file: ${book.filePath}")
                     } catch (e: Exception) {
@@ -578,6 +602,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
                 searchManager.removeBook(bookId)
                 bookDao.delete(book)
+                // The paged "all books" list and search results are snapshots, not live queries
+                _pagedBooks.update { list -> list.filterNot { it.book.id == bookId } }
+                _searchResults.update { list -> list.filterNot { it.book.id == bookId } }
                 Log.d(TAG, "Deleted book: ${book.title}")
                 true
             } catch (e: Exception) {

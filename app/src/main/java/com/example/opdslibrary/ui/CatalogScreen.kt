@@ -1443,7 +1443,9 @@ fun EntryCard(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val hasNavigableLink = entry.isNavigation() || entry.links.any {
+    // Books are tappable (opens the details page) even when they carry only acquisition and
+    // image links, as inpx-web entries do; otherwise Unlink/Update would be unreachable.
+    val hasNavigableLink = entry.isNavigation() || entry.isAcquisition() || entry.links.any {
         it.rel == "alternate" || it.rel == "related" || it.type?.contains("atom+xml") == true
     }
 

@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -481,10 +482,10 @@ fun LibraryScreen(
         }
     }
 
-    // Error snackbar
+    // Show errors (e.g. a refused delete), then clear
     uiState.errorMessage?.let { error ->
         LaunchedEffect(error) {
-            // Show error and clear
+            showLibraryError(context, error)
             viewModel.clearError()
         }
     }
@@ -630,7 +631,7 @@ private fun BooksGrid(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun BookCard(
     bookWithDetails: BookWithDetails,
@@ -641,10 +642,11 @@ private fun BookCard(
     val authors = bookWithDetails.authors
 
     Card(
-        onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
             .height(220.dp)
+            .clip(CardDefaults.shape)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Column(
             modifier = Modifier.fillMaxSize()
@@ -890,3 +892,27 @@ private fun LetterIndexScroller(
     }
 }
 
+/**
+ * Show a library error to the user. When a delete was refused for lack of "All files access",
+ * also open that setting for this app so the user can grant it and retry.
+ */
+internal fun showLibraryError(context: android.content.Context, message: String) {
+    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+    if (message.contains(com.example.opdslibrary.viewmodel.LibraryViewModel.ALL_FILES_ACCESS_NEEDED) &&
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R
+    ) {
+        try {
+            context.startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    android.net.Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: Exception) {
+            context.startActivity(
+                Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+}
