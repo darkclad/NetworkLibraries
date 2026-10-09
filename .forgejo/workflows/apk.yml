@@ -43,6 +43,7 @@ jobs:
           : "${ORG_GRADLE_PROJECT_BOOKS_OPDS_USER:?BOOKS_OPDS_USER secret missing}"
           : "${ORG_GRADLE_PROJECT_BOOKS_OPDS_PASS:?BOOKS_OPDS_PASS secret missing}"
           sh ./gradlew :app:assembleRelease --console=plain
+          apk-assert-embedded 'app/build/outputs/apk/release/*.apk' ORG_GRADLE_PROJECT_CF_ACCESS_CLIENT_ID ORG_GRADLE_PROJECT_CF_ACCESS_CLIENT_SECRET ORG_GRADLE_PROJECT_BOOKS_OPDS_USER ORG_GRADLE_PROJECT_BOOKS_OPDS_PASS
         env:
           ORG_GRADLE_PROJECT_CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           ORG_GRADLE_PROJECT_CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
