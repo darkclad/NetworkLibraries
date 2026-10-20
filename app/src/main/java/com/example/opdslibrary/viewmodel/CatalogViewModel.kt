@@ -336,6 +336,24 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         return bookWithDetails?.authors?.firstOrNull()?.id
     }
 
+    // Page generation: bumped whenever the displayed page changes (navigation, back, restore).
+    // Async loads (refresh, next page, initial load + retries) capture it when they start and
+    // drop their result if the user has moved to another page meanwhile, so a slow refresh can
+    // no longer overwrite the page the user navigated to.
+    private var pageGeneration = 0
+
+    private fun newPageGeneration(): Int {
+        pageGeneration++
+        isLoadingMore = false
+        return pageGeneration
+    }
+
+    private fun isStale(gen: Int, what: String): Boolean {
+        if (gen == pageGeneration) return false
+        Log.d(TAG, "Dropping stale $what result (gen $gen, current $pageGeneration)")
+        return true
+    }
+
     // Pagination state
     private var currentFeed: OpdsFeed? = null
     private var currentBaseUrl: String = ""
@@ -863,6 +881,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * Load an OPDS feed from the given URL
      */
     fun loadFeed(url: String, addToHistory: Boolean = true, forceRefresh: Boolean = false) {
+        val gen = newPageGeneration()
         viewModelScope.launch {
             Log.d(TAG, "loadFeed: url=$url, addToHistory=$addToHistory, forceRefresh=$forceRefresh")
 
@@ -903,7 +922,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                 null
             }
 
-            repository.fetchFeed(url, storedUsername, storedPassword, forceRefresh, parentUpdated).fold(
+            val fetched = repository.fetchFeed(url, storedUsername, storedPassword, forceRefresh, parentUpdated)
+            if (isStale(gen, "loadFeed")) return@launch
+            fetched.fold(
                 onSuccess = { result ->
                     val feed = result.feed
                     val fromCache = result.fromCache
@@ -1113,7 +1134,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         addToHistory: Boolean,
         forceRefresh: Boolean,
         isAlternate: Boolean,
-        hasTriedAlternate: Boolean = false
+        hasTriedAlternate: Boolean = false,
+        gen: Int = pageGeneration
     ) {
         viewModelScope.launch {
             Log.d(TAG, "loadFeedWithRetry: url=$urlToLoad, original=$originalUrl, isAlternate=$isAlternate")
@@ -1128,7 +1150,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
 
             // When loading from alternate, pass primary URL for cache operations
             val primaryUrlForCache = if (isAlternate) originalUrl else null
-            repository.fetchFeed(urlToLoad, storedUsername, storedPassword, forceRefresh, parentUpdated, primaryUrlForCache).fold(
+            val fetched = repository.fetchFeed(urlToLoad, storedUsername, storedPassword, forceRefresh, parentUpdated, primaryUrlForCache)
+            if (isStale(gen, "loadFeedWithRetry")) return@launch
+            fetched.fold(
                 onSuccess = { result ->
                     val feed = result.feed
                     val fromCache = result.fromCache
@@ -1210,7 +1234,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                             Log.d(TAG, "Primary failed, trying alternate URL: $alternateUrl")
                             // Add a small delay before retrying to avoid hammering servers
                             kotlinx.coroutines.delay(1000)
-                            loadFeedWithRetry(alternateUrl, originalUrl, addToHistory, forceRefresh, true, true)
+                            if (isStale(gen, "loadFeedWithRetry")) return@fold
+                            loadFeedWithRetry(alternateUrl, originalUrl, addToHistory, forceRefresh, true, true, gen)
                             return@fold
                         }
                     }
@@ -1241,6 +1266,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * Load a feed from cache (used when network fails but cached data is available)
      */
     fun loadCachedFeed(url: String) {
+        newPageGeneration()
         viewModelScope.launch {
             Log.d(TAG, "loadCachedFeed: url=$url")
 
@@ -1412,6 +1438,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * Navigate back in history
      */
     fun navigateBack(): Boolean {
+        newPageGeneration()
         Log.d(TAG, "navigateBack called (navigatedFromFavorites=$navigatedFromFavorites, historySize=${navigationHistory.size})")
 
         // If we navigated from favorites and are at the root of catalog navigation, go back to favorites
@@ -1466,6 +1493,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      */
     private suspend fun restoreFeedFromCache(entry: NavigationHistoryEntry) {
         val cachedEntries = entry.cachedEntries ?: return
+        newPageGeneration()
 
         // Restore accumulated entries and pagination state
         accumulatedEntries.clear()
@@ -1642,12 +1670,15 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         val lastPageIndex = loadedPageUrls.size - 1
         Log.d(TAG, "Refreshing last page only: $lastPageUrl (page ${lastPageIndex + 1} of ${loadedPageUrls.size})")
 
+        val gen = pageGeneration
         viewModelScope.launch {
             _isNetworkActive.value = true
 
             try {
                 // Fetch the last page with force refresh
-                repository.fetchFeed(lastPageUrl, storedUsername, storedPassword, forceRefresh = true, null).fold(
+                val fetched = repository.fetchFeed(lastPageUrl, storedUsername, storedPassword, forceRefresh = true, null)
+                if (isStale(gen, "refresh")) return@launch
+                fetched.fold(
                     onSuccess = { result ->
                         val newFeed = result.feed
                         Log.d(TAG, "Last page refreshed: ${newFeed.entries.size} entries")
@@ -1769,7 +1800,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                     }
                 )
             } finally {
-                _isNetworkActive.value = false
+                // A newer page owns the indicator once the user has navigated away
+                if (gen == pageGeneration) _isNetworkActive.value = false
             }
         }
     }
@@ -1793,7 +1825,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
         }
 
         // Start with primary URL (useAlternate = false)
-        loadMoreItemsWithRetry(originalUrl, false)
+        loadMoreItemsWithRetry(originalUrl, false, gen = pageGeneration)
     }
 
     /**
@@ -1801,7 +1833,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * @param useAlternate Whether to use alternate URL for this attempt
      * @param hasTriedAlternate Whether we've already tried the alternate URL
      */
-    private fun loadMoreItemsWithRetry(originalUrl: String, useAlternate: Boolean, hasTriedAlternate: Boolean = false) {
+    private fun loadMoreItemsWithRetry(originalUrl: String, useAlternate: Boolean, hasTriedAlternate: Boolean = false, gen: Int) {
         val urlToLoad = if (useAlternate) {
             convertToAlternateUrl(originalUrl) ?: originalUrl
         } else {
@@ -1814,7 +1846,9 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
 
             // When loading from alternate, pass primary URL for cache operations
             val primaryUrlForCache = if (useAlternate) originalUrl else null
-            repository.fetchFeed(urlToLoad, primaryUrl = primaryUrlForCache).fold(
+            val fetched = repository.fetchFeed(urlToLoad, primaryUrl = primaryUrlForCache)
+            if (isStale(gen, "loadMore")) return@launch
+            fetched.fold(
                 onSuccess = { result ->
                     val newFeed = result.feed
                     Log.d(TAG, "More items loaded: ${newFeed.entries.size} new entries (fromCache: ${result.fromCache})")
@@ -1901,7 +1935,8 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
                         Log.d(TAG, "Primary failed for loadMoreItems, trying alternate URL after delay...")
                         // Add a small delay before retrying to avoid hammering servers
                         kotlinx.coroutines.delay(1000)
-                        loadMoreItemsWithRetry(originalUrl, true, true)
+                        if (isStale(gen, "loadMore")) return@fold
+                        loadMoreItemsWithRetry(originalUrl, true, true, gen)
                         return@fold
                     }
 
@@ -2657,6 +2692,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * Load favorites feed
      */
     private fun loadFavoritesFeed(url: String, addToHistory: Boolean = true) {
+        newPageGeneration()
         viewModelScope.launch {
             try {
                 _isNetworkActive.value = true
@@ -2769,6 +2805,7 @@ class CatalogViewModel(application: Application) : AndroidViewModel(application)
      * Load last visited authors as a virtual feed
      */
     private fun loadLastVisitedAuthorsFeed(addToHistory: Boolean = true) {
+        newPageGeneration()
         viewModelScope.launch {
             try {
                 _isNetworkActive.value = true
