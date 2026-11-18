@@ -28,17 +28,24 @@ On Windows, use `gradlew.bat` instead of `./gradlew`.
 
 ### Distribution / self-update
 
-`publish-opds.ps1` builds a signed **release** APK, copies it to the self-hosted dist server,
-and writes an `index.json` manifest for the in-app updater. Bump the version each publish:
+Publishing is done by CI: `.forgejo/workflows/apk.yml` runs on every push to `main` (self-hosted
+Forgejo runner, `android-ci` image). It builds and signs the **release** APK and publishes it to
+`dist.darkclad.org/opds/` with the `index.json` manifest the in-app updater reads — but only when
+`versionCode` in `app/build.gradle.kts` is above the live one. **To ship, bump `versionCode` in the
+same commit** (note the bump in the commit message). Workflow is direct-to-`main`; push to `origin`
+(Forgejo), which mirrors to GitHub.
 
-```powershell
-.\publish-opds.ps1 -Bump          # build release + publish (default channel)
-.\publish-opds.ps1 -BuildType debug   # separate .debug package, local testing only
-```
+CI secrets: `RELEASE_KEYSTORE_B64`, `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET` (updater token),
+`BOOKS_OPDS_USER`/`BOOKS_OPDS_PASS` (self-hosted catalog auth). The build fails if any is missing
+or not embedded in the APK.
 
 The field app is the release package `com.example.opdslibrary` (stable `release-keystore.jks`
-signature), so each new build installs in place and preserves data. The keystore is gitignored
-and local to the build machine — back it up (its password is in `app/build.gradle.kts`).
+signature), so each new build installs in place and preserves data. The keystore is gitignored;
+CI gets it from a secret and a local copy lives on the build machine — keep it backed up (its
+password is in `app/build.gradle.kts`).
+
+`publish-opds.ps1` is the older manual path (local build → dist share → manifest; `-Bump`,
+`-BuildType debug` for the separate `.debug` test package). Use it only if CI is unavailable.
 
 ## Architecture Overview
 
@@ -63,6 +70,8 @@ This is an Android OPDS (Open Publication Distribution System) catalog browser a
 **Data Layer**:
 - `data/AppDatabase.kt` - Room database with 15+ migration versions. Contains both OPDS entities (catalogs, feed cache, favorites) and Library entities (books, authors, series, genres)
 - `network/OpdsRepository.kt` - OPDS feed fetching with caching and authentication support
+- `network/BooksAuth.kt` - built-in Basic auth for the self-hosted inpx-web catalogs on `books.darkclad.org` (`BuildConfig.BOOKS_OPDS_*`)
+- Default catalogs are seeded in `AppDatabase.ensureDefaultCatalogsExist` (Flibusta + the two self-hosted mirrors); retired defaults are deleted there too
 - `data/OpdsParser.kt` - Custom XML parser for OPDS/Atom feeds
 
 **Book Format Parsers** (`library/parser/`):
@@ -82,7 +91,7 @@ This is an Android OPDS (Open Publication Distribution System) catalog browser a
 - `library/search/BookSearchManager.kt` - Lucene-based full-text search index
 
 **In-app self-updater** (`update/`):
-- `AppUpdater.kt` - reads the publish `index.json` manifest, downloads a newer APK (SHA-256 verified), and hands it to the system `PackageInstaller`. Optional Cloudflare Access headers via `BuildConfig.CF_ACCESS_*` (embedded by `publish-opds.ps1`). Requires `buildConfig = true` and the `REQUEST_INSTALL_PACKAGES` permission.
+- `AppUpdater.kt` - reads the publish `index.json` manifest, downloads a newer APK (SHA-256 verified), and hands it to the system `PackageInstaller`. Optional Cloudflare Access headers via `BuildConfig.CF_ACCESS_*` (embedded at build time from CI secrets). Requires `buildConfig = true` and the `REQUEST_INSTALL_PACKAGES` permission.
 - `AppInstallReceiver.kt` - PackageInstaller status callbacks (launches the confirm screen).
 - `AppUpdateChecker.kt` - Compose front-end: silent check on launch (wired in `MainActivity`) + manual "Check for updates" in Settings → About.
 
@@ -110,5 +119,5 @@ Library models in `data/library/`: `Book`, `Author`, `Series`, `Genre` with junc
 - Apache Lucene for full-text search
 - WorkManager for background scanning
 - DataStore for preferences
-- `buildConfig = true`; `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET` build fields (empty unless supplied by the publish script) for the in-app updater
-- Release signed with `release-keystore.jks`; `versionCode` bumped per published build via `publish-opds.ps1 -Bump`
+- `buildConfig = true`; build fields `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET` (in-app updater) and `BOOKS_OPDS_USER`/`BOOKS_OPDS_PASS` (self-hosted catalogs), empty unless passed as Gradle properties (CI secrets)
+- Release signed with `release-keystore.jks`; bump `versionCode` in `app/build.gradle.kts` to publish a build

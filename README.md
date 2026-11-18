@@ -11,7 +11,7 @@ An Android application for browsing OPDS (Open Publication Distribution System) 
 - Configurable format priority for automatic best-format selection
 - Favorites system to save books and feeds for later
 - Last visited authors for quick access — listed alphabetically; long-press an author to favorite it or remove it from the list
-- Authentication support for password-protected catalogs
+- Authentication support for password-protected catalogs (built-in credentials for the self-hosted mirrors)
 - Alternate URL fallback (e.g., mirror domains)
 - Feed caching with timestamp-based invalidation
 - Search with OpenSearch support and search history
@@ -73,27 +73,34 @@ On Windows, use `gradlew.bat` instead of `./gradlew`.
 
 ## Distribution
 
-Field builds are published with `publish-opds.ps1`, which builds a signed **release** APK
-(`com.example.opdslibrary`, keystore `release-keystore.jks`), copies it to the self-hosted
-dist server, and writes an `index.json` manifest that the in-app updater reads. Bump the
-version each time:
+Field builds are published by Forgejo Actions (`.forgejo/workflows/apk.yml`). Every push to
+`main` builds and signs the **release** APK (`com.example.opdslibrary`), and publishes it to the
+self-hosted dist server with an `index.json` manifest that the in-app updater reads. It
+publishes only when `versionCode` in `app/build.gradle.kts` is above the live one, so **bump
+`versionCode` in the same commit** to ship a build.
 
-```powershell
-.\publish-opds.ps1 -Bump
-```
+The build fails if any of its secrets is missing: the signing keystore, the Cloudflare Access
+token the updater uses off-LAN, and the Basic-auth credentials for the self-hosted catalogs.
 
 Because release builds share a stable signature, the updater installs each new build in
-place without losing data. The keystore is gitignored (not in the repo) and lives only on
-the build machine — **back it up**; losing it means future builds can no longer update an
-installed app in place.
+place without losing data. The keystore (`release-keystore.jks`) is gitignored; CI gets it from
+a Forgejo secret, and a local copy sits on the build machine — **keep it backed up**; losing it
+means future builds can no longer update an installed app in place.
+
+`publish-opds.ps1` is the older manual path (build locally, copy to the dist share, write the
+manifest). It still works but is no longer the normal way to ship.
 
 ## Default Catalogs
 
-The app comes pre-configured with several free OPDS catalogs:
-- **Flibusta** — Russian books (with alternate URL fallback)
-- **Project Gutenberg** — Public domain books
-- **Manybooks** — Free ebooks
-- **Smashwords** — Independent authors
+The app comes pre-configured with these OPDS catalogs:
+- **Flibusta** (`flibusta.is`, falls back to `flibusta.net`) — the default catalog
+- **Flibusta (darkclad)** — self-hosted Flibusta mirror (inpx-web)
+- **lib.rus.ec (darkclad)** — self-hosted lib.rus.ec mirror (inpx-web)
+
+The self-hosted mirrors need Basic auth away from the home network; release builds carry
+the credentials built in (`BOOKS_OPDS_USER` / `BOOKS_OPDS_PASS`), so no login prompt appears.
+Project Gutenberg, Manybooks and Smashwords used to be defaults; they are removed from
+existing installs on upgrade.
 
 ## License
 
