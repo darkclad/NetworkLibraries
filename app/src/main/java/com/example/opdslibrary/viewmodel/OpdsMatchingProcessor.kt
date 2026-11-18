@@ -9,6 +9,7 @@ import com.example.opdslibrary.data.library.Book
 import com.example.opdslibrary.data.library.BookAuthor
 import com.example.opdslibrary.utils.FilenameUtils
 import com.example.opdslibrary.utils.FormatSelector
+import com.example.opdslibrary.utils.TitleMatcher
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -128,8 +129,19 @@ class OpdsMatchingProcessor(
             try {
                 // Quick check - does this entry already have an OPDS ID match?
                 Log.d(TAG, "  Checking OPDS ID match: entryId=${entry.id}, catalogId=$catalogId")
-                val existsByOpdsId = bookDao.existsByOpdsEntry(entry.id, catalogId)
+                var existsByOpdsId = bookDao.existsByOpdsEntry(entry.id, catalogId)
                 Log.d(TAG, "  OPDS ID exists in DB: $existsByOpdsId")
+
+                // A link the old matcher made between different volumes of a series
+                // ("Дозоры I" linked to the "Дозоры II" entry) is wrong: drop it and match again.
+                if (existsByOpdsId) {
+                    val linked = bookDao.getBookByOpdsEntry(entry.id, catalogId)
+                    if (linked != null && !TitleMatcher.sameVolume(linked.title, entry.title)) {
+                        Log.w(TAG, "  ✗ Stale link: book ${linked.id} '${linked.title}' is a different volume than '${entry.title}' → unlinking")
+                        bookDao.clearOpdsLink(entry.id, catalogId)
+                        existsByOpdsId = false
+                    }
+                }
 
                 if (existsByOpdsId) {
                     // Fast path - already matched by OPDS ID
@@ -349,6 +361,24 @@ class OpdsMatchingProcessor(
                 }
             }
 
+            // Guards that apply to every candidate, however it was found (title, filename, author):
+            //  - it must be the same volume as the entry — a filename or author match alone
+            //    must not link "Name 2" to the local "Name";
+            //  - it must not already be linked to a different entry of this catalog — that
+            //    entry is another book, typically the previous volume of the same series.
+            //    An exact title match may still reclaim it: that undoes a wrong link the old
+            //    matcher made (book 1 linked to the book 2 entry) when book 1's entry is shown.
+            val entryMarkers = TitleMatcher.volumeMarkers(entry.title)
+            candidateBooks.removeIf { book ->
+                val wrongVolume = TitleMatcher.volumeMarkers(book.title) != entryMarkers
+                val linkedElsewhere = book.catalogId == catalogId &&
+                    book.opdsEntryId != null && book.opdsEntryId != entry.id &&
+                    normalizeTitle(book.title) != entryTitle
+                if (wrongVolume) Log.d(TAG, "    ✗ Drop '${book.title}' (id=${book.id}): different volume")
+                if (linkedElsewhere) Log.d(TAG, "    ✗ Drop '${book.title}' (id=${book.id}): already linked to ${book.opdsEntryId}")
+                wrongVolume || linkedElsewhere
+            }
+
             if (candidateBooks.isEmpty()) {
                 Log.w(TAG, "  ✗ NO MATCHES for: filename='$filename', title='${entry.title}', author='$entryAuthor'")
                 emitResult(entry.id, CatalogViewModel.BookLibraryStatus.NOT_IN_LIBRARY)
@@ -476,18 +506,7 @@ class OpdsMatchingProcessor(
         }
     }
 
-    /**
-     * Normalize title for matching (lowercase, remove extra spaces, remove common articles)
-     */
-    private fun normalizeTitle(title: String): String {
-        return title.lowercase()
-            .replace(Regex("\\s+"), " ") // Replace multiple spaces with single space
-            .trim()
-            .removePrefix("the ")
-            .removePrefix("an ")
-        // "a " is intentionally NOT removed: it is a common first word in non-English
-        // titles where it is not an article, causing false matches if stripped.
-    }
+    private fun normalizeTitle(title: String): String = TitleMatcher.normalize(title)
 
     /**
      * Query books by author name, handling both "Last First" (Russian/Eastern) and
@@ -550,85 +569,8 @@ class OpdsMatchingProcessor(
         return sets[0].filter { it.id in ids }
     }
 
-    /**
-     * Check if two titles are similar enough to be considered a match
-     * @param strictMode If true, requires higher similarity (90%+) for book detail pages
-     */
-    private fun titlesSimilar(title1: String, title2: String, strictMode: Boolean = false): Boolean {
-        // Exact match after normalization
-        if (title1 == title2) return true
-
-        // Always check: if both titles end in a number (with or without # prefix)
-        // and those numbers differ, they are different volumes in a series — reject.
-        // e.g. "точка бифуркации #1" vs "точка бифуркации #15" must NOT match.
-        val num1 = extractTrailingNumber(title1)
-        val num2 = extractTrailingNumber(title2)
-        if (num1 != null && num2 != null && num1 != num2) return false
-
-        // Check if one contains the other (for cases like "Book" vs "Book: Subtitle").
-        // Require the shorter title to be at least 8 characters to prevent short/numeric
-        // tokens (e.g. "1", "II", "run") from falsely matching unrelated longer titles.
-        // Also verify the match doesn't end mid-number to prevent "Book #1" matching "Book #15".
-        val shorter = if (title1.length <= title2.length) title1 else title2
-        val longer = if (title1.length <= title2.length) title2 else title1
-        if (shorter.length >= 8 && longer.contains(shorter)) {
-            val matchIndex = longer.indexOf(shorter)
-            val charAfterMatch = longer.getOrNull(matchIndex + shorter.length)
-            // If the character right after the match is a digit, this is a false prefix match
-            // e.g. "book #1" found in "book #15" — the '5' continues the number
-            if (charAfterMatch == null || !charAfterMatch.isDigit()) return true
-        }
-
-        // Check Levenshtein distance for typos/minor differences
-        val distance = levenshteinDistance(title1, title2)
-        val maxLength = maxOf(title1.length, title2.length)
-        val similarity = 1.0 - (distance.toDouble() / maxLength)
-
-        // Use stricter threshold for book detail pages, more lenient for collections
-        val threshold = if (strictMode) 0.90 else 0.80
-        return similarity >= threshold
-    }
-
-    /**
-     * Extract trailing number from a title, handling formats like:
-     * "Book #15" → 15, "Book 3" → 3, "Book #1" → 1
-     * Returns null if no trailing number found.
-     */
-    private fun extractTrailingNumber(title: String): Int? {
-        val lastToken = title.trimEnd().substringAfterLast(" ")
-        // Try direct parse first ("book 3")
-        lastToken.toIntOrNull()?.let { return it }
-        // Try stripping # prefix ("book #3")
-        if (lastToken.startsWith("#")) {
-            lastToken.removePrefix("#").toIntOrNull()?.let { return it }
-        }
-        return null
-    }
-
-    /**
-     * Calculate Levenshtein distance between two strings
-     */
-    private fun levenshteinDistance(s1: String, s2: String): Int {
-        val len1 = s1.length
-        val len2 = s2.length
-        val dp = Array(len1 + 1) { IntArray(len2 + 1) }
-
-        for (i in 0..len1) dp[i][0] = i
-        for (j in 0..len2) dp[0][j] = j
-
-        for (i in 1..len1) {
-            for (j in 1..len2) {
-                val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
-                dp[i][j] = minOf(
-                    dp[i - 1][j] + 1,      // deletion
-                    dp[i][j - 1] + 1,      // insertion
-                    dp[i - 1][j - 1] + cost // substitution
-                )
-            }
-        }
-
-        return dp[len1][len2]
-    }
+    private fun titlesSimilar(title1: String, title2: String, strictMode: Boolean = false): Boolean =
+        TitleMatcher.titlesSimilar(title1, title2, strictMode)
 
     /**
      * Find the best match from candidate books based on author, title, and filename similarity
