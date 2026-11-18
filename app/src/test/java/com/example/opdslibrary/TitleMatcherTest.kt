@@ -79,6 +79,36 @@ class TitleMatcherTest {
         assertTrue(similar("1984", "1984"))
     }
 
+    // ── Book vs. entry, using the book's own series number ──────────────────
+
+    @Test fun seriesNumberSuppliesMissingTitleNumber() {
+        // Catalog numbers the title, the file only carries <sequence number="2"/>.
+        assertTrue(TitleMatcher.bookMatchesEntry("Ревизор", 2f, "Ревизор 2", strictMode = true))
+        assertTrue(TitleMatcher.bookMatchesEntry("Точка бифуркации", 3f, "Точка Бифуркации #3", strictMode = true))
+        assertTrue(TitleMatcher.bookMatchesEntry("Дозоры", 2f, "Дозоры II", strictMode = true))
+        // And the other way round: the file numbers its title, the catalog doesn't.
+        assertTrue(TitleMatcher.bookMatchesEntry("Ревизор 2", 2f, "Ревизор", strictMode = true))
+    }
+
+    @Test fun seriesNumberDoesNotLinkOtherVolumes() {
+        assertFalse(TitleMatcher.bookMatchesEntry("Ревизор", 1f, "Ревизор 2"))
+        assertFalse(TitleMatcher.bookMatchesEntry("Ревизор", null, "Ревизор 2"))
+        assertFalse(TitleMatcher.bookMatchesEntry("Ревизор 3", 3f, "Ревизор 2"))
+        assertFalse(TitleMatcher.bookMatchesEntry("Дозоры I", 1f, "Дозоры II"))
+        assertFalse(TitleMatcher.bookMatchesEntry("Ревизор", 2.5f, "Ревизор 2"))
+    }
+
+    @Test fun seriesNumberStillRequiresSimilarTitle() {
+        assertFalse(TitleMatcher.bookMatchesEntry("Совсем другая книга", 2f, "Ревизор 2"))
+    }
+
+    @Test fun volumesAgree() {
+        assertTrue(TitleMatcher.volumesAgree("Ревизор", 2f, "Ревизор 2"))
+        assertTrue(TitleMatcher.volumesAgree("Ревизор 2", null, "Ревизор #2"))
+        assertFalse(TitleMatcher.volumesAgree("Ревизор", null, "Ревизор 2"))
+        assertFalse(TitleMatcher.volumesAgree("Ревизор", 1f, "Ревизор 2"))
+    }
+
     // ── Marker extraction ───────────────────────────────────────────────────
 
     @Test fun markerExtraction() {

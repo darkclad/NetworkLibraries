@@ -89,6 +89,59 @@ object TitleMatcher {
         // are different books no matter how similar the rest of the title is.
         if (!sameVolume(title1, title2)) return false
 
+        return textSimilar(title1, title2, strictMode)
+    }
+
+    /**
+     * Whether a local book and an OPDS entry name the same volume. Besides identical
+     * title markers, the book's own series number (from its FB2/EPUB metadata) can
+     * supply the one number its title lacks: catalogs often number titles that the file
+     * itself doesn't ("Ревизор" with sequence number 2 is the "Ревизор 2" entry).
+     */
+    fun volumesAgree(bookTitle: String, bookSeriesNumber: Float?, entryTitle: String): Boolean {
+        val bm = volumeMarkers(bookTitle)
+        val em = volumeMarkers(entryTitle)
+        if (bm == em) return true
+        val n = seriesInt(bookSeriesNumber) ?: return false
+        return (bm - em) + (em - bm) == setOf(n)
+    }
+
+    /**
+     * Whether a local book is the book an OPDS entry describes: same volume (see
+     * [volumesAgree]) and a similar title once the series number is set aside.
+     */
+    fun bookMatchesEntry(
+        bookTitle: String,
+        bookSeriesNumber: Float?,
+        entryTitle: String,
+        strictMode: Boolean = false
+    ): Boolean {
+        val b = normalize(bookTitle)
+        val e = normalize(entryTitle)
+        if (b == e) return true
+        if (volumeMarkers(b) == volumeMarkers(e)) return textSimilar(b, e, strictMode)
+        if (!volumesAgree(b, bookSeriesNumber, e)) return false
+        val n = seriesInt(bookSeriesNumber) ?: return false
+        return textSimilar(removeVolume(b, n), removeVolume(e, n), strictMode)
+    }
+
+    private fun seriesInt(number: Float?): Int? =
+        number?.takeIf { it > 0f && it % 1f == 0f }?.toInt()
+
+    /** Drop the tokens naming volume [n] ("2", "#2", "II") from a normalized title. */
+    private fun removeVolume(title: String, n: Int): String =
+        title.split(" ")
+            .filterNot { word ->
+                val core = word.trim { !it.isLetterOrDigit() }
+                core.isNotEmpty() && volumeMarkers(core) == setOf(n) &&
+                    (core.all { it.isDigit() } || ROMAN.matches(core))
+            }
+            .joinToString(" ")
+            .trim { !it.isLetterOrDigit() }
+
+    private fun textSimilar(title1: String, title2: String, strictMode: Boolean): Boolean {
+        if (title1 == title2) return true
+
         // One contains the other ("Book" vs "Book: Subtitle"). The shorter title must be
         // at least 8 characters so short tokens don't match unrelated longer titles.
         val shorter = if (title1.length <= title2.length) title1 else title2

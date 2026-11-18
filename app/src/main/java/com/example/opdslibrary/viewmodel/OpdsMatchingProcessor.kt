@@ -134,9 +134,12 @@ class OpdsMatchingProcessor(
 
                 // A link the old matcher made between different volumes of a series
                 // ("Дозоры I" linked to the "Дозоры II" entry) is wrong: drop it and match again.
+                // A link made by downloading the book from this entry is always right, even
+                // when the file's own title differs from the catalog's; never touch it.
                 if (existsByOpdsId) {
                     val linked = bookDao.getBookByOpdsEntry(entry.id, catalogId)
-                    if (linked != null && !TitleMatcher.sameVolume(linked.title, entry.title)) {
+                    if (linked != null && !linked.downloadedViaApp &&
+                        !TitleMatcher.volumesAgree(linked.title, linked.seriesNumber, entry.title)) {
                         Log.w(TAG, "  ✗ Stale link: book ${linked.id} '${linked.title}' is a different volume than '${entry.title}' → unlinking")
                         bookDao.clearOpdsLink(entry.id, catalogId)
                         existsByOpdsId = false
@@ -285,7 +288,7 @@ class OpdsMatchingProcessor(
                     // Step 1a: strict title filter within author's books
                     if (entryTitle.isNotEmpty()) {
                         val titleMatches = authorBooks.filter { book ->
-                            val similar = titlesSimilar(normalizeTitle(book.title), entryTitle, strictMode = true)
+                            val similar = TitleMatcher.bookMatchesEntry(book.title, book.seriesNumber, entry.title, strictMode = true)
                             if (similar) Log.d(TAG, "    ✓ Title match: '${book.title}' (id=${book.id})")
                             similar
                         }
@@ -323,7 +326,7 @@ class OpdsMatchingProcessor(
             if (candidateBooks.isEmpty()) {
                 if (entryTitle.isNotEmpty()) {
                     val rawTitle = bookDao.getBooksByTitlePattern(entryTitle)
-                    val titleMatches = rawTitle.filter { titlesSimilar(normalizeTitle(it.title), entryTitle) }
+                    val titleMatches = rawTitle.filter { TitleMatcher.bookMatchesEntry(it.title, it.seriesNumber, entry.title) }
                     candidateBooks.addAll(titleMatches)
                     titleMatches.forEach { titleMatchedIds.add(it.id) }
                     Log.d(TAG, "  Global title search: ${titleMatches.size} matches")
@@ -368,9 +371,8 @@ class OpdsMatchingProcessor(
             //    entry is another book, typically the previous volume of the same series.
             //    An exact title match may still reclaim it: that undoes a wrong link the old
             //    matcher made (book 1 linked to the book 2 entry) when book 1's entry is shown.
-            val entryMarkers = TitleMatcher.volumeMarkers(entry.title)
             candidateBooks.removeIf { book ->
-                val wrongVolume = TitleMatcher.volumeMarkers(book.title) != entryMarkers
+                val wrongVolume = !TitleMatcher.volumesAgree(book.title, book.seriesNumber, entry.title)
                 val linkedElsewhere = book.catalogId == catalogId &&
                     book.opdsEntryId != null && book.opdsEntryId != entry.id &&
                     normalizeTitle(book.title) != entryTitle
@@ -568,9 +570,6 @@ class OpdsMatchingProcessor(
         ) { acc, books -> acc.intersect(books.map { it.id }.toSet()) }
         return sets[0].filter { it.id in ids }
     }
-
-    private fun titlesSimilar(title1: String, title2: String, strictMode: Boolean = false): Boolean =
-        TitleMatcher.titlesSimilar(title1, title2, strictMode)
 
     /**
      * Find the best match from candidate books based on author, title, and filename similarity
